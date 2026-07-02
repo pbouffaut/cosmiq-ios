@@ -90,6 +90,11 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                SeaBanner(status: "Connected · \(ble.deviceName ?? "COSMIQ+")",
+                          bubbleCount: 6, compact: true)
+            }
+
             if let error = model.errorMessage {
                 Section {
                     Label(error, systemImage: "exclamationmark.triangle")

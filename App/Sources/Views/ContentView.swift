@@ -40,7 +40,8 @@ struct DeviceView: View {
                 ConnectView()
             }
         }
-        .navigationTitle(ble.state.isConnected ? (ble.deviceName ?? "COSMIQ+") : "Connect")
+        // The SeaBanner is the title of this panel.
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 

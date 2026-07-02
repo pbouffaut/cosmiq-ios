@@ -38,7 +38,7 @@ struct AboutView: View {
 
             Section("Privacy") {
                 VStack(alignment: .leading, spacing: 10) {
-                    bullet("iphone", "Everything stays on your iPhone. Your dives, settings and notes are stored only on this device — there is no account, no server, no cloud.")
+                    bullet("iphone", "Your dives, settings and notes are stored on this device and — if you use iCloud — in your own private iCloud Drive, so your logbook survives reinstalling the app. There is no account and no third-party server.")
                     bullet("antenna.radiowaves.left.and.right", "Bluetooth is used solely to talk to your dive computer, and only while the app is open.")
                     bullet("location", "Your location is read only when you tap “Use Current Location” to tag a dive, and is saved only in your local logbook.")
                     bullet("chart.bar.xaxis", "No analytics, no tracking, no third-party SDKs. The app makes zero network requests.")

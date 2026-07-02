@@ -6,29 +6,7 @@ struct ConnectView: View {
     var body: some View {
         List {
             Section {
-                ZStack {
-                    Theme.seaGradient
-                    BubbleField(bubbleCount: 9)
-                    VStack(spacing: 8) {
-                        Image(systemName: "water.waves")
-                            .font(.system(size: 36, weight: .semibold))
-                            .foregroundStyle(Color.foam)
-                            .symbolEffect(.variableColor.iterative,
-                                          isActive: ble.state == .scanning)
-                        Text("COSMIQ")
-                            .font(.system(size: 32, weight: .heavy, design: .rounded))
-                            .foregroundStyle(.white)
-                            .kerning(3)
-                        Text("back from the abyss")
-                            .font(.callout.weight(.medium).italic())
-                            .foregroundStyle(Color.foam)
-                    }
-                    .padding(.vertical, 30)
-                }
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
+                SeaBanner(animateIcon: ble.state == .scanning)
             }
 
             Section {

@@ -47,7 +47,10 @@ struct LogbookView: View {
                 }
             } footer: {
                 if !logbook.dives.isEmpty {
-                    Text("\(logbook.dives.count) dives · stored on this iPhone")
+                    Label(
+                        "\(logbook.dives.count) dives · \(logbook.storedInICloud ? "synced to your iCloud Drive" : "stored on this iPhone")",
+                        systemImage: logbook.storedInICloud ? "icloud.fill" : "internaldrive"
+                    )
                 }
             }
         }
@@ -62,7 +65,7 @@ struct LogbookView: View {
                     systemImage: "water.waves",
                     description: Text(ble.state.isConnected
                         ? "Tap Sync to download dives from your COSMIQ+."
-                        : "Connect your COSMIQ+ on the Device tab, then sync your dives here.")
+                        : "Your logbook lives here, connected or not. To add dives, connect your COSMIQ+ on the Device tab and tap Sync.")
                 )
             }
         }
