@@ -44,7 +44,7 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     private var wantsScan = false
     private var peripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
-    private var rxBuffer = Data()
+    private var rxBuffer: [UInt8] = []
 
     /// Continuation waiting for the next decoded packet, if any.
     private var pendingReceive: CheckedContinuation<CosmiqPacket, Error>?
@@ -203,14 +203,45 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     }
 
     private func handleIncoming(_ chunk: Data) {
-        rxBuffer.append(chunk)
-        while let newlineIndex = rxBuffer.firstIndex(of: 0x0A) {
-            let lineData = rxBuffer[rxBuffer.startIndex...newlineIndex]
-            rxBuffer.removeSubrange(rxBuffer.startIndex...newlineIndex)
-            guard let line = String(data: lineData, encoding: .utf8) else { continue }
-            appendLog("RX \(line.trimmingCharacters(in: .whitespacesAndNewlines))")
+        // Log every raw notification, even ones that never parse — this is
+        // what makes the Diagnostics tab useful when framing goes wrong.
+        if let text = String(data: chunk, encoding: .utf8), text.allSatisfy(\.isASCII) {
+            appendLog("RX \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+        } else {
+            appendLog("RX(hex) \(chunk.map { String(format: "%02x", $0) }.joined())")
+        }
+        rxBuffer.append(contentsOf: chunk)
+        drainPackets()
+    }
+
+    /// Extract complete packets from the receive buffer. Packets self-describe
+    /// their length ('$' + CMD + CSUM + LEN + payload), so this works whether
+    /// or not the device appends a newline, and across notification splits.
+    private func drainPackets() {
+        while true {
+            // Drop noise (newlines, partial garbage) before the next packet start.
+            guard let start = rxBuffer.firstIndex(where: {
+                $0 == UInt8(ascii: "$") || $0 == UInt8(ascii: "#")
+            }) else {
+                rxBuffer.removeAll()
+                return
+            }
+            rxBuffer.removeFirst(start)
+            guard rxBuffer.count >= 7 else { return } // need the full header
+
+            // Header: start byte + 6 hex chars; the last two are the length
+            // field, counting payload hex chars.
+            guard let lengthField = Int(String(decoding: rxBuffer[5...6], as: UTF8.self), radix: 16) else {
+                rxBuffer.removeFirst() // corrupt start byte; resync
+                continue
+            }
+            let total = 7 + lengthField
+            guard rxBuffer.count >= total else { return } // wait for the rest
+
+            let packetBytes = Array(rxBuffer.prefix(total))
+            rxBuffer.removeFirst(total)
             do {
-                let packet = try CosmiqPacket.decode(line: line)
+                let packet = try CosmiqPacket.decode(line: String(decoding: packetBytes, as: UTF8.self))
                 resumePending(with: packet)
             } catch {
                 log.error("Packet decode failed: \(error.localizedDescription)")
@@ -329,6 +360,14 @@ extension CosmiqBLEManager: CBCentralManagerDelegate, CBPeripheralDelegate {
         guard let value = characteristic.value else { return }
         Task { @MainActor in
             self.handleIncoming(value)
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic,
+                                error: Error?) {
+        guard let error else { return }
+        Task { @MainActor in
+            self.appendLog("TX error: \(error.localizedDescription)")
         }
     }
 }
