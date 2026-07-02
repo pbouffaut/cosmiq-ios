@@ -37,7 +37,11 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     @Published private(set) var packetLog: [String] = []
 
     private let log = Logger(subsystem: "com.pbouffaut.CosmiqCompanion", category: "ble")
-    private var central: CBCentralManager!
+    /// Created lazily on first use: CBCentralManager's init talks synchronously
+    /// to bluetoothd and would stall app launch by several seconds.
+    private var central: CBCentralManager?
+    /// Scan requested while the central was still powering on.
+    private var wantsScan = false
     private var peripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxBuffer = Data()
@@ -49,15 +53,17 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     /// `receive()` so fast replies are never dropped.
     private var inbox: [CosmiqPacket] = []
 
-    override init() {
-        super.init()
-        central = CBCentralManager(delegate: self, queue: .main)
-    }
-
     // MARK: Connection lifecycle
 
     func startScan() {
-        guard central.state == .poweredOn else { return }
+        let central = ensureCentral()
+        guard central.state == .poweredOn else {
+            // Freshly created central reports .unknown until the poweredOn
+            // callback; remember the request and start scanning then.
+            wantsScan = true
+            state = .scanning
+            return
+        }
         discovered = []
         state = .scanning
         // The COSMIQ+ advertises the NUS service; scan broadly and filter by
@@ -66,7 +72,8 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     }
 
     func stopScan() {
-        central.stopScan()
+        wantsScan = false
+        central?.stopScan()
         if state == .scanning { state = .idle }
     }
 
@@ -76,14 +83,21 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
         peripheral = device.peripheral
         deviceName = device.name
         device.peripheral.delegate = self
-        central.connect(device.peripheral, options: nil)
+        ensureCentral().connect(device.peripheral, options: nil)
     }
 
     func disconnect() {
         if let peripheral {
-            central.cancelPeripheralConnection(peripheral)
+            central?.cancelPeripheralConnection(peripheral)
         }
         cleanupConnection(error: nil)
+    }
+
+    private func ensureCentral() -> CBCentralManager {
+        if let central { return central }
+        let created = CBCentralManager(delegate: self, queue: .main)
+        central = created
+        return created
     }
 
     private func cleanupConnection(error: Error?) {
@@ -222,7 +236,12 @@ extension CosmiqBLEManager: CBCentralManagerDelegate, CBPeripheralDelegate {
             switch centralState {
             case .poweredOn:
                 if self.state == .bluetoothOff { self.state = .idle }
+                if self.wantsScan {
+                    self.wantsScan = false
+                    self.startScan()
+                }
             case .poweredOff, .unauthorized, .unsupported:
+                self.wantsScan = false
                 self.state = .bluetoothOff
             default:
                 break
