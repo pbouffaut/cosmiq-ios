@@ -19,6 +19,11 @@ struct ContentView: View {
                 DiagnosticsView()
             }
             .tabItem { Label("Diagnostics", systemImage: "waveform.path.ecg") }
+
+            NavigationStack {
+                AboutView()
+            }
+            .tabItem { Label("About", systemImage: "info.circle") }
         }
     }
 }

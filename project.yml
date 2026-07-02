@@ -22,7 +22,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: CosmiQ Companion
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSBluetoothAlwaysUsageDescription: >-

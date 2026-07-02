@@ -6,27 +6,27 @@ struct ConnectView: View {
     var body: some View {
         List {
             Section {
-                VStack(spacing: 10) {
-                    ZStack {
-                        Circle()
-                            .fill(Theme.accentGradient.opacity(0.25))
-                            .frame(width: 92, height: 92)
+                ZStack {
+                    Theme.seaGradient
+                    BubbleField(bubbleCount: 9)
+                    VStack(spacing: 8) {
                         Image(systemName: "water.waves")
-                            .font(.system(size: 40, weight: .semibold))
+                            .font(.system(size: 36, weight: .semibold))
                             .foregroundStyle(Color.foam)
                             .symbolEffect(.variableColor.iterative,
                                           isActive: ble.state == .scanning)
+                        Text("COSMIQ")
+                            .font(.system(size: 32, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white)
+                            .kerning(3)
+                        Text("back from the abyss")
+                            .font(.callout.weight(.medium).italic())
+                            .foregroundStyle(Color.foam)
                     }
-                    Text("COSMIQ+")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(.white)
-                    Text("Your dive computer, alive and well.")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.75))
+                    .padding(.vertical, 30)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
-                .background(Theme.seaGradient, in: RoundedRectangle(cornerRadius: 16))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
             }
