@@ -51,7 +51,34 @@ public struct Dive: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// Raw header + profile bytes, kept so dives can be re-parsed or re-exported later.
     public let rawData: Data
 
+    // MARK: User-editable metadata (not from the device; all optional so old
+    // logbook JSON keeps decoding)
+
+    /// User-chosen dive title, e.g. "Night dive with turtles".
+    public var name: String? = nil
+    public var siteName: String? = nil
+    public var notes: String? = nil
+    public var latitude: Double? = nil
+    public var longitude: Double? = nil
+    /// Overrides `start` when the device clock was wrong for this dive.
+    public var userDate: Date? = nil
+
     public var id: String { fingerprint }
+
+    /// The date to display and export: the user's correction if set, else the
+    /// device's own clock.
+    public var effectiveDate: Date? { userDate ?? start }
+
+    public var displayTitle: String {
+        if let name, !name.isEmpty { return name }
+        if let siteName, !siteName.isEmpty { return siteName }
+        return effectiveDate.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Dive"
+    }
+
+    public var coordinate: (latitude: Double, longitude: Double)? {
+        guard let latitude, let longitude else { return nil }
+        return (latitude, longitude)
+    }
 
     public var averageTemperature: Double? {
         guard !samples.isEmpty else { return nil }

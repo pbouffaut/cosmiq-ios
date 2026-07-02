@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>CosmiQ Companion talks to your COSMIQ+ dive computer over Bluetooth to change its settings and download your dive logs.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Your location is only used when you choose to tag a dive with the spot where it happened. It never leaves your iPhone.</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchScreen</key>

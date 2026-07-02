@@ -31,8 +31,19 @@ final class Logbook: ObservableObject {
         save()
     }
 
+    /// Replace the stored dive with the same fingerprint (metadata edits).
+    func update(_ dive: Dive) {
+        guard let index = dives.firstIndex(where: { $0.fingerprint == dive.fingerprint }) else { return }
+        dives[index] = dive
+        sortAndSave()
+    }
+
+    func dive(withID id: String) -> Dive? {
+        dives.first { $0.fingerprint == id }
+    }
+
     private func sortAndSave() {
-        dives.sort { ($0.start ?? .distantPast) > ($1.start ?? .distantPast) }
+        dives.sort { ($0.effectiveDate ?? .distantPast) > ($1.effectiveDate ?? .distantPast) }
         save()
     }
 

@@ -10,6 +10,7 @@ struct CosmiqCompanionApp: App {
             ContentView()
                 .environmentObject(ble)
                 .environmentObject(logbook)
+                .tint(.ocean)
         }
     }
 }

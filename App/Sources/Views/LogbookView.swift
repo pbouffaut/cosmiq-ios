@@ -115,18 +115,29 @@ struct DiveRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: dive.activity == .freedive ? "figure.pool.swim" : "water.waves")
-                .font(.title3)
-                .foregroundStyle(.blue)
-                .frame(width: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(dive.start.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Unknown date")
+            SeaBadge(systemImage: dive.activity == .freedive ? "figure.pool.swim" : "water.waves")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(dive.displayTitle)
                     .font(.headline)
-                Text("\(dive.activity.label) · \(Self.durationText(dive.duration)) · max \(dive.maxDepth, specifier: "%.1f") m")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if dive.name != nil || dive.siteName != nil,
+                   let date = dive.effectiveDate {
+                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 10) {
+                    Label(String(format: "%.1f m", dive.maxDepth), systemImage: "arrow.down.to.line")
+                    Label(Self.durationText(dive.duration), systemImage: "timer")
+                    if dive.coordinate != nil {
+                        Image(systemName: "mappin.and.ellipse")
+                            .foregroundStyle(Color.aqua)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
+        .padding(.vertical, 2)
     }
 
     static func durationText(_ seconds: Int) -> String {

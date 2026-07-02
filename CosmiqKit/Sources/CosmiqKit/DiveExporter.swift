@@ -29,6 +29,23 @@ public enum DiveExporter {
 
         """
 
+        // Dive sites are document-level in UDDF; one entry per dive that has
+        // a site name or coordinates.
+        let sitedDives = dives.enumerated().filter { $0.element.siteName != nil || $0.element.coordinate != nil }
+        if !sitedDives.isEmpty {
+            xml += "<divesite>\n"
+            for (index, dive) in sitedDives {
+                xml += "<site id=\"site\(index + 1)\">"
+                xml += "<name>\(escape(dive.siteName ?? "Dive site"))</name>"
+                if let coordinate = dive.coordinate {
+                    xml += "<geography><latitude>\(coordinate.latitude)</latitude>"
+                    xml += "<longitude>\(coordinate.longitude)</longitude></geography>"
+                }
+                xml += "</site>\n"
+            }
+            xml += "</divesite>\n"
+        }
+
         // Gas definitions are document-level in UDDF; collect the distinct
         // nitrox mixes used by the scuba dives.
         let mixes = Set(dives.filter { $0.activity == .scuba }.map(\.oxygenPercent)).sorted()
@@ -47,8 +64,11 @@ public enum DiveExporter {
         for (index, dive) in dives.enumerated() {
             xml += "<dive id=\"dive\(index + 1)_\(dive.fingerprint)\">\n"
             xml += "<informationbeforedive>\n"
-            if let start = dive.start {
+            if let start = dive.effectiveDate {
                 xml += "<datetime>\(dateFormatter.string(from: start))</datetime>\n"
+            }
+            if dive.siteName != nil || dive.coordinate != nil {
+                xml += "<link ref=\"site\(index + 1)\"/>\n"
             }
             xml += "</informationbeforedive>\n"
             if dive.activity == .scuba {
@@ -64,6 +84,12 @@ public enum DiveExporter {
             xml += "<informationafterdive>"
             xml += "<greatestdepth>\(format(dive.maxDepth))</greatestdepth>"
             xml += "<diveduration>\(dive.duration)</diveduration>"
+            var noteParts: [String] = []
+            if let name = dive.name, !name.isEmpty { noteParts.append(name) }
+            if let notes = dive.notes, !notes.isEmpty { noteParts.append(notes) }
+            if !noteParts.isEmpty {
+                xml += "<notes><para>\(escape(noteParts.joined(separator: " — ")))</para></notes>"
+            }
             xml += "</informationafterdive>\n"
             xml += "</dive>\n"
         }
@@ -78,5 +104,11 @@ public enum DiveExporter {
 
     private static func format(_ value: Double) -> String {
         String(format: "%.2f", value)
+    }
+
+    private static func escape(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 }

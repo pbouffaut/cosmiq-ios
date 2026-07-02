@@ -6,6 +6,32 @@ struct ConnectView: View {
     var body: some View {
         List {
             Section {
+                VStack(spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(Theme.accentGradient.opacity(0.25))
+                            .frame(width: 92, height: 92)
+                        Image(systemName: "water.waves")
+                            .font(.system(size: 40, weight: .semibold))
+                            .foregroundStyle(Color.foam)
+                            .symbolEffect(.variableColor.iterative,
+                                          isActive: ble.state == .scanning)
+                    }
+                    Text("COSMIQ+")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.white)
+                    Text("Your dive computer, alive and well.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.75))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 28)
+                .background(Theme.seaGradient, in: RoundedRectangle(cornerRadius: 16))
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+
+            Section {
                 switch ble.state {
                 case .bluetoothOff:
                     Label("Bluetooth is off or not authorized", systemImage: "exclamationmark.triangle")
