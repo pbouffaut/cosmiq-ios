@@ -35,56 +35,64 @@ final class CosmiqSession {
     private static let interCommandGap: Duration = .milliseconds(300)
 
     func readDeviceInfo() async throws -> CosmiqDeviceInfo {
-        let firmware = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.queryFirmware))
-        try await Task.sleep(for: Self.interCommandGap)
-        let mac = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.queryMacAddress))
-        return CosmiqDeviceInfo(
-            firmware: Int((firmware.payload.first ?? 0) & 0x3F),
-            serial: mac.payload.map { String(format: "%02X", $0) }.joined(separator: ":")
-        )
+        try await ble.exclusive {
+            let firmware = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.queryFirmware))
+            try await Task.sleep(for: Self.interCommandGap)
+            let mac = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.queryMacAddress))
+            return CosmiqDeviceInfo(
+                firmware: Int((firmware.payload.first ?? 0) & 0x3F),
+                serial: mac.payload.map { String(format: "%02X", $0) }.joined(separator: ":")
+            )
+        }
     }
 
     /// Read every config packet, tolerating individual timeouts: whatever the
     /// device did answer is kept, and the failed queries are reported so the
     /// UI can say what's missing instead of discarding everything.
     func readAllSettings() async throws -> SettingsReadResult {
-        var settings = CosmiqSettings()
-        var failed: [UInt8] = []
-        for command in CosmiqCommand.settingsQueries {
-            try await Task.sleep(for: Self.interCommandGap)
-            // $60 (freedive alarms 3-6) doesn't exist on the original COSMIQ+,
-            // only on the Gen 5 — probe it once with a short timeout instead
-            // of the full retry dance.
-            let isOptional = command == CosmiqCommand.queryFreediveSecondary
-            do {
-                let reply = try await ble.transfer(CosmiqCommand.query(command),
-                                                   timeout: isOptional ? 2.0 : 5.0,
-                                                   retries: isOptional ? 0 : 1)
-                settings.apply(reply)
-            } catch CosmiqProtocolError.timeout {
-                failed.append(command)
+        try await ble.exclusive {
+            var settings = CosmiqSettings()
+            var failed: [UInt8] = []
+            for command in CosmiqCommand.settingsQueries {
+                try await Task.sleep(for: Self.interCommandGap)
+                // $60 (freedive alarms 3-6) doesn't exist on the original COSMIQ+,
+                // only on the Gen 5 — probe it once with a short timeout instead
+                // of the full retry dance.
+                let isOptional = command == CosmiqCommand.queryFreediveSecondary
+                do {
+                    let reply = try await ble.transfer(CosmiqCommand.query(command),
+                                                       timeout: isOptional ? 2.0 : 5.0,
+                                                       retries: isOptional ? 0 : 1)
+                    settings.apply(reply)
+                } catch CosmiqProtocolError.timeout {
+                    failed.append(command)
+                }
             }
+            if failed.count == CosmiqCommand.settingsQueries.count {
+                throw CosmiqProtocolError.timeout
+            }
+            return SettingsReadResult(settings: settings, failedQueries: failed)
         }
-        if failed.count == CosmiqCommand.settingsQueries.count {
-            throw CosmiqProtocolError.timeout
-        }
-        return SettingsReadResult(settings: settings, failedQueries: failed)
     }
 
     /// Write one setting, then read back the affected config packet so the
     /// caller can fold the device's actual stored values into its settings.
     func apply(_ write: CosmiqPacket) async throws -> CosmiqPacket? {
-        _ = try await ble.transfer(write)
-        guard let verification = CosmiqSettingWrite.verificationQuery(for: write.command) else {
-            return nil
+        try await ble.exclusive {
+            _ = try await ble.transfer(write)
+            guard let verification = CosmiqSettingWrite.verificationQuery(for: write.command) else {
+                return nil
+            }
+            // The device needs a beat before the new value reads back.
+            try await Task.sleep(for: .milliseconds(400))
+            return try await ble.transfer(CosmiqCommand.query(verification))
         }
-        // The device needs a beat before the new value reads back.
-        try await Task.sleep(for: .milliseconds(400))
-        return try await ble.transfer(CosmiqCommand.query(verification))
     }
 
     func syncClock() async throws {
-        _ = try await ble.transfer(CosmiqSettingWrite.systemTime(Date()))
+        try await ble.exclusive {
+            _ = try await ble.transfer(CosmiqSettingWrite.systemTime(Date()))
+        }
     }
 
     // MARK: Dive log download (protocol from libdivecomputer deepblu_cosmiq.c)
@@ -93,8 +101,16 @@ final class CosmiqSession {
     /// dives are fetched first (they're small); profiles only for new dives.
     func downloadDives(knownFingerprints: Set<String>,
                        progress: @escaping (DiveSyncProgress) -> Void) async throws -> [Dive] {
+        try await ble.exclusive {
+            try await downloadDivesLocked(knownFingerprints: knownFingerprints, progress: progress)
+        }
+    }
+
+    private func downloadDivesLocked(knownFingerprints: Set<String>,
+                                     progress: @escaping (DiveSyncProgress) -> Void) async throws -> [Dive] {
         progress(DiveSyncProgress(phase: "Reading dive count…", fraction: 0))
 
+        try await Task.sleep(for: Self.interCommandGap)
         let countReply = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.diveCount))
         let diveCount = Int(countReply.payload.first ?? 0)
         guard diveCount > 0 else { return [] }
@@ -104,6 +120,7 @@ final class CosmiqSession {
         for index in 1...diveCount {
             progress(DiveSyncProgress(phase: "Reading dive \(index) of \(diveCount)…",
                                       fraction: 0.3 * Double(index - 1) / Double(diveCount)))
+            try await Task.sleep(for: Self.interCommandGap)
             let lengthReply = try await ble.transfer(
                 CosmiqPacket(command: CosmiqCommand.diveHeader, payload: [UInt8(index)]))
             let headerLength = Int(lengthReply.payload.first ?? 0)
@@ -132,6 +149,7 @@ final class CosmiqSession {
             progress(DiveSyncProgress(phase: "Downloading dive \(position + 1) of \(newIndexes.count)…",
                                       fraction: base))
 
+            try await Task.sleep(for: Self.interCommandGap)
             let lengthReply = try await ble.transfer(
                 CosmiqPacket(command: CosmiqCommand.diveProfile, payload: [UInt8(index + 1)]))
             guard lengthReply.payload.count >= 2 else {

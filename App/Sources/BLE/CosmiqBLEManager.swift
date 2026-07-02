@@ -53,6 +53,11 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     /// `receive()` so fast replies are never dropped.
     private var inbox: [CosmiqPacket] = []
 
+    /// FIFO lock so logical operations (settings read, dive sync, a write)
+    /// never interleave their packets on the wire.
+    private var operationActive = false
+    private var operationWaiters: [CheckedContinuation<Void, Never>] = []
+
     // MARK: Connection lifecycle
 
     func startScan() {
@@ -109,6 +114,26 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
         if case .failed = state {} else {
             state = .idle
         }
+    }
+
+    // MARK: Operation lock
+
+    /// Run `body` with exclusive access to the device. Concurrent callers
+    /// queue up in order instead of interleaving commands.
+    func exclusive<T>(_ body: () async throws -> T) async rethrows -> T {
+        if operationActive {
+            await withCheckedContinuation { operationWaiters.append($0) }
+        } else {
+            operationActive = true
+        }
+        defer {
+            if operationWaiters.isEmpty {
+                operationActive = false
+            } else {
+                operationWaiters.removeFirst().resume()
+            }
+        }
+        return try await body()
     }
 
     // MARK: Packet I/O
