@@ -136,18 +136,8 @@ struct DiveDetailView: View {
         Section("Dive Site") {
             let center = CLLocationCoordinate2D(latitude: coordinate.latitude,
                                                 longitude: coordinate.longitude)
-            Map(initialPosition: .region(MKCoordinateRegion(
-                center: center,
-                span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03)
-            ))) {
-                Marker(current.siteName ?? "Dive site", systemImage: "flag.fill", coordinate: center)
-                    .tint(.orange)
-            }
-            .mapStyle(.hybrid)
-            .frame(height: 180)
-            .allowsHitTesting(false)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+            MapSnapshotView(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
 
             Button {
                 let placemark = MKPlacemark(coordinate: center)

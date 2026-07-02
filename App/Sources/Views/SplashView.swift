@@ -1,55 +1,39 @@
 import SwiftUI
 
 /// Animated field of rising bubbles, used by the splash screen and as hero
-/// decoration.
+/// decoration. Drawn in a single Canvas at a capped frame rate — one
+/// Metal-backed layer, no per-bubble view animations, so it stays cheap even
+/// inside scrolling lists.
 struct BubbleField: View {
-    struct Bubble: Identifiable {
-        let id: Int
-        let x: CGFloat        // 0...1 horizontal position
-        let size: CGFloat
-        let duration: Double
-        let delay: Double
-        let drift: CGFloat
-    }
-
     var bubbleCount = 14
-    @State private var rising = false
-
-    private var bubbles: [Bubble] {
-        // Deterministic pseudo-random layout so the view is stable.
-        (0..<bubbleCount).map { index in
-            let fraction = CGFloat(index) / CGFloat(bubbleCount)
-            let jitter = CGFloat((index * 37 % 13)) / 13.0
-            return Bubble(
-                id: index,
-                x: (fraction + jitter * 0.4).truncatingRemainder(dividingBy: 1.0),
-                size: 6 + jitter * 22,
-                duration: 3.2 + Double(jitter) * 3.5,
-                delay: Double(index) * 0.35,
-                drift: (jitter - 0.5) * 40
-            )
-        }
-    }
 
     var body: some View {
-        GeometryReader { geometry in
-            ForEach(bubbles) { bubble in
-                Circle()
-                    .strokeBorder(Color.foam.opacity(0.5), lineWidth: max(1.5, bubble.size * 0.12))
-                    .background(Circle().fill(Color.foam.opacity(0.08)))
-                    .frame(width: bubble.size, height: bubble.size)
-                    .position(x: bubble.x * geometry.size.width + (rising ? bubble.drift : 0),
-                              y: rising ? -bubble.size : geometry.size.height + bubble.size)
-                    .opacity(rising ? 0.0 : 0.9)
-                    .animation(
-                        .linear(duration: bubble.duration)
-                        .repeatForever(autoreverses: false)
-                        .delay(bubble.delay),
-                        value: rising
-                    )
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            Canvas { context, size in
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                for index in 0..<bubbleCount {
+                    // Deterministic pseudo-random parameters per bubble.
+                    let jitter = Double((index * 37) % 13) / 13.0
+                    let radius = 3.0 + jitter * 11.0
+                    let speed = 26.0 + jitter * 46.0 // points per second
+                    let travel = size.height + radius * 4
+                    let phase = Double(index) / Double(max(bubbleCount, 1)) * 1.7 + jitter
+                    let progress = ((time * speed / travel) + phase).truncatingRemainder(dividingBy: 1.0)
+
+                    let y = size.height + radius * 2 - progress * travel
+                    let baseX = ((Double(index) / Double(max(bubbleCount, 1))) + jitter * 0.4)
+                        .truncatingRemainder(dividingBy: 1.0) * size.width
+                    let x = baseX + sin(time * 0.8 + phase * 6) * (jitter - 0.5) * 30
+
+                    let opacity = 0.55 * (1.0 - progress * 0.8)
+                    let rect = CGRect(x: x - radius, y: y - radius,
+                                      width: radius * 2, height: radius * 2)
+                    context.stroke(Circle().path(in: rect),
+                                   with: .color(Color.foam.opacity(opacity)),
+                                   lineWidth: max(1.2, radius * 0.16))
+                }
             }
         }
-        .onAppear { rising = true }
         .allowsHitTesting(false)
     }
 }

@@ -47,20 +47,10 @@ struct DiveEditView: View {
 
                 Section("Location") {
                     if let coordinate = dive.coordinate {
-                        Map(initialPosition: .region(MKCoordinateRegion(
-                            center: CLLocationCoordinate2D(latitude: coordinate.latitude,
-                                                           longitude: coordinate.longitude),
-                            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-                        ))) {
-                            Marker(dive.siteName ?? "Dive site",
-                                   systemImage: "water.waves",
-                                   coordinate: CLLocationCoordinate2D(latitude: coordinate.latitude,
-                                                                      longitude: coordinate.longitude))
-                        }
-                        .frame(height: 160)
-                        .allowsHitTesting(false)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                        MapSnapshotView(latitude: coordinate.latitude,
+                                        longitude: coordinate.longitude,
+                                        height: 160, hybrid: false)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
                     }
 
                     Button {
