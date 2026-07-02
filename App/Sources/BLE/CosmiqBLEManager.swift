@@ -45,6 +45,9 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     /// Continuation waiting for the next decoded packet, if any.
     private var pendingReceive: CheckedContinuation<CosmiqPacket, Error>?
     private var receiveTimeoutTask: Task<Void, Never>?
+    /// Packets that arrived while nobody was waiting — consumed by the next
+    /// `receive()` so fast replies are never dropped.
+    private var inbox: [CosmiqPacket] = []
 
     override init() {
         super.init()
@@ -87,6 +90,7 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
         peripheral = nil
         txCharacteristic = nil
         rxBuffer.removeAll()
+        inbox.removeAll()
         failPending(with: error ?? CosmiqProtocolError.disconnected)
         if case .failed = state {} else {
             state = .idle
@@ -106,8 +110,12 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
         peripheral.writeValue(packet.encodedData, for: txCharacteristic, type: type)
     }
 
-    /// Wait for the next decoded packet from the device.
-    func receive(timeout: TimeInterval = 3.0) async throws -> CosmiqPacket {
+    /// Wait for the next decoded packet from the device, draining any packet
+    /// that arrived while nobody was listening first.
+    func receive(timeout: TimeInterval = 5.0) async throws -> CosmiqPacket {
+        if !inbox.isEmpty {
+            return inbox.removeFirst()
+        }
         guard pendingReceive == nil else {
             throw CosmiqProtocolError.malformedPacket("overlapping receive")
         }
@@ -122,19 +130,30 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     }
 
     /// Send a command and wait for the reply with a matching command byte.
-    /// Packets with other command bytes (stale replies) are skipped.
-    func transfer(_ packet: CosmiqPacket, timeout: TimeInterval = 3.0) async throws -> CosmiqPacket {
-        try send(packet)
+    /// Packets with other command bytes (stale replies) are skipped, and a
+    /// timed-out command is re-sent once — the device can be slow to answer
+    /// the first command after connecting.
+    func transfer(_ packet: CosmiqPacket, timeout: TimeInterval = 5.0,
+                  retries: Int = 1) async throws -> CosmiqPacket {
+        var attempt = 0
         while true {
-            let reply = try await receive(timeout: timeout)
-            if reply.command == packet.command { return reply }
-            log.warning("Skipping out-of-band reply 0x\(String(format: "%02x", reply.command))")
+            do {
+                try send(packet)
+                while true {
+                    let reply = try await receive(timeout: timeout)
+                    if reply.command == packet.command { return reply }
+                    log.warning("Skipping out-of-band reply 0x\(String(format: "%02x", reply.command))")
+                }
+            } catch CosmiqProtocolError.timeout where attempt < retries {
+                attempt += 1
+                appendLog("-- timeout, resending (attempt \(attempt + 1))")
+            }
         }
     }
 
     /// Collect `totalBytes` of bulk data streamed as packets with command
     /// `command` (dive headers: 0x42, dive profiles: 0x44).
-    func receiveBulk(command: UInt8, totalBytes: Int, timeout: TimeInterval = 3.0,
+    func receiveBulk(command: UInt8, totalBytes: Int, timeout: TimeInterval = 5.0,
                      progress: ((Int) -> Void)? = nil) async throws -> [UInt8] {
         var data: [UInt8] = []
         data.reserveCapacity(totalBytes)
@@ -150,10 +169,16 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     }
 
     private func resumePending(with packet: CosmiqPacket) {
+        guard let pendingReceive else {
+            // Nobody is waiting yet — keep the packet for the next receive().
+            inbox.append(packet)
+            if inbox.count > 64 { inbox.removeFirst(inbox.count - 64) }
+            return
+        }
         receiveTimeoutTask?.cancel()
         receiveTimeoutTask = nil
-        pendingReceive?.resume(returning: packet)
-        pendingReceive = nil
+        pendingReceive.resume(returning: packet)
+        self.pendingReceive = nil
     }
 
     private func failPending(with error: Error) {
