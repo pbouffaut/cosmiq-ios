@@ -24,8 +24,14 @@ final class SettingsModel: ObservableObject {
         defer { isLoading = false }
         do {
             deviceInfo = try await session.readDeviceInfo()
-            settings = try await session.readAllSettings()
-            errorMessage = nil
+            let result = try await session.readAllSettings()
+            settings = result.settings
+            if result.failedQueries.isEmpty {
+                errorMessage = nil
+            } else {
+                let names = result.failedQueries.map { String(format: "$%02X", $0) }
+                errorMessage = "Some settings didn't answer (\(names.joined(separator: ", "))). Pull down to retry."
+            }
         } catch {
             errorMessage = error.localizedDescription
         }

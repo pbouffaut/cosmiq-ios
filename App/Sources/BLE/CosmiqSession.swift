@@ -12,6 +12,12 @@ struct DiveSyncProgress: Equatable {
     var fraction: Double
 }
 
+struct SettingsReadResult {
+    var settings: CosmiqSettings
+    /// Query commands that got no answer; empty means a complete read.
+    var failedQueries: [UInt8]
+}
+
 /// High-level operations composed from BLE transfers. All calls are serialized
 /// by the caller (the UI performs one operation at a time).
 @MainActor
@@ -24,8 +30,13 @@ final class CosmiqSession {
 
     // MARK: Settings
 
+    /// The device wedges if commands arrive back-to-back; the official app and
+    /// the web controller both leave ~300 ms between queries.
+    private static let interCommandGap: Duration = .milliseconds(300)
+
     func readDeviceInfo() async throws -> CosmiqDeviceInfo {
         let firmware = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.queryFirmware))
+        try await Task.sleep(for: Self.interCommandGap)
         let mac = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.queryMacAddress))
         return CosmiqDeviceInfo(
             firmware: Int((firmware.payload.first ?? 0) & 0x3F),
@@ -33,13 +44,25 @@ final class CosmiqSession {
         )
     }
 
-    func readAllSettings() async throws -> CosmiqSettings {
+    /// Read every config packet, tolerating individual timeouts: whatever the
+    /// device did answer is kept, and the failed queries are reported so the
+    /// UI can say what's missing instead of discarding everything.
+    func readAllSettings() async throws -> SettingsReadResult {
         var settings = CosmiqSettings()
+        var failed: [UInt8] = []
         for command in CosmiqCommand.settingsQueries {
-            let reply = try await ble.transfer(CosmiqCommand.query(command))
-            settings.apply(reply)
+            try await Task.sleep(for: Self.interCommandGap)
+            do {
+                let reply = try await ble.transfer(CosmiqCommand.query(command))
+                settings.apply(reply)
+            } catch CosmiqProtocolError.timeout {
+                failed.append(command)
+            }
         }
-        return settings
+        if failed.count == CosmiqCommand.settingsQueries.count {
+            throw CosmiqProtocolError.timeout
+        }
+        return SettingsReadResult(settings: settings, failedQueries: failed)
     }
 
     /// Write one setting, then read back the affected config packet so the
