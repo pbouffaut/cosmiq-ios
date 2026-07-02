@@ -74,6 +74,22 @@ struct AboutView: View {
                 }
             }
 
+            Section("Author") {
+                HStack(spacing: 12) {
+                    SeaBadge(systemImage: "person.fill")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Philippe Bouffaut")
+                            .font(.headline)
+                        Text("Diver · COSMIQ+ owner")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Link(destination: URL(string: "mailto:pbouffaut@gmail.com")!) {
+                    Label("pbouffaut@gmail.com", systemImage: "envelope")
+                }
+            }
+
             Section {
             } footer: {
                 Text("Made with ❤️ for a dive computer that deserved better than a dead server.")
