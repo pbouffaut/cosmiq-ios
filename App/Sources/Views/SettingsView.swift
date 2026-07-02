@@ -26,10 +26,13 @@ final class SettingsModel: ObservableObject {
             deviceInfo = try await session.readDeviceInfo()
             let result = try await session.readAllSettings()
             settings = result.settings
-            if result.failedQueries.isEmpty {
+            // A silent $60 just means an older device without alarms 3-6;
+            // only the other queries are worth an error banner.
+            let critical = result.failedQueries.filter { $0 != CosmiqCommand.queryFreediveSecondary }
+            if critical.isEmpty {
                 errorMessage = nil
             } else {
-                let names = result.failedQueries.map { String(format: "$%02X", $0) }
+                let names = critical.map { String(format: "$%02X", $0) }
                 errorMessage = "Some settings didn't answer (\(names.joined(separator: ", "))). Pull down to retry."
             }
         } catch {
@@ -236,7 +239,7 @@ struct SettingsView: View {
     }
 
     private var freediveSection: some View {
-        Section("Freedive") {
+        Section {
             stepperRow(
                 title: "Max Time",
                 value: model.settings.freediveMaxTimeSeconds,
@@ -244,7 +247,7 @@ struct SettingsView: View {
                 onCommit: { model.apply(CosmiqSettingWrite.freediveMaxTime(seconds: $0)) }
             )
 
-            ForEach(1...6, id: \.self) { number in
+            ForEach(1...(hasExtendedAlarms ? 6 : 2), id: \.self) { number in
                 stepperRow(
                     title: "Depth Alarm \(number)",
                     value: model.settings.freediveDepthAlarms[number - 1],
@@ -252,7 +255,18 @@ struct SettingsView: View {
                     onCommit: { model.setFreediveAlarm(number: number, meters: $0) }
                 )
             }
+        } header: {
+            Text("Freedive")
+        } footer: {
+            if !hasExtendedAlarms {
+                Text("Depth alarms 3–6 exist only on the Cosmiq Gen 5; this device reports alarms 1–2.")
+            }
         }
+    }
+
+    /// True when the device answered the $60 query (Gen 5 firmware).
+    private var hasExtendedAlarms: Bool {
+        model.settings.freediveDepthAlarms[2] != nil
     }
 
     // MARK: Row helpers

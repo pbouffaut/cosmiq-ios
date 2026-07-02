@@ -52,8 +52,14 @@ final class CosmiqSession {
         var failed: [UInt8] = []
         for command in CosmiqCommand.settingsQueries {
             try await Task.sleep(for: Self.interCommandGap)
+            // $60 (freedive alarms 3-6) doesn't exist on the original COSMIQ+,
+            // only on the Gen 5 — probe it once with a short timeout instead
+            // of the full retry dance.
+            let isOptional = command == CosmiqCommand.queryFreediveSecondary
             do {
-                let reply = try await ble.transfer(CosmiqCommand.query(command))
+                let reply = try await ble.transfer(CosmiqCommand.query(command),
+                                                   timeout: isOptional ? 2.0 : 5.0,
+                                                   retries: isOptional ? 0 : 1)
                 settings.apply(reply)
             } catch CosmiqProtocolError.timeout {
                 failed.append(command)
