@@ -1,42 +1,72 @@
 import CosmiqKit
 import SwiftUI
 
-/// Shown after the sync scan: the dives on the device that aren't in the
-/// logbook yet. The user picks which to download.
+/// Dives waiting for the user's selection before entering the logbook —
+/// either found on the device during sync, or parsed from a UDDF file.
+struct PendingImport: Identifiable {
+    enum Source {
+        case device([DiveCandidate])
+        case file([Dive])
+    }
+
+    let id = UUID()
+    let source: Source
+
+    /// What the picker shows: header-only summaries for device dives, the
+    /// full parsed dives for file imports.
+    var summaries: [Dive] {
+        switch source {
+        case .device(let candidates): return candidates.map(\.summary)
+        case .file(let dives): return dives
+        }
+    }
+
+    var sourceDescription: String {
+        switch source {
+        case .device: return "on the device"
+        case .file: return "in the file"
+        }
+    }
+}
+
+/// Selection sheet shown before any import: only dives that aren't in the
+/// logbook yet, all pre-selected.
 struct DiveImportPicker: View {
-    let candidates: [DiveCandidate]
-    let onImport: ([DiveCandidate]) -> Void
+    let pending: PendingImport
+    let onImport: ([Dive]) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var selection: Set<String>
 
-    init(candidates: [DiveCandidate], onImport: @escaping ([DiveCandidate]) -> Void) {
-        self.candidates = candidates
+    init(pending: PendingImport, onImport: @escaping ([Dive]) -> Void) {
+        self.pending = pending
         self.onImport = onImport
-        _selection = State(initialValue: Set(candidates.map(\.id))) // all selected
+        _selection = State(initialValue: Set(pending.summaries.map(\.fingerprint)))
     }
+
+    private var dives: [Dive] { pending.summaries }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(candidates) { candidate in
+                    ForEach(dives) { dive in
                         Button {
-                            toggle(candidate.id)
+                            toggle(dive.fingerprint)
                         } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: selection.contains(candidate.id)
+                                Image(systemName: selection.contains(dive.fingerprint)
                                       ? "checkmark.circle.fill" : "circle")
                                     .font(.title3)
-                                    .foregroundStyle(selection.contains(candidate.id)
+                                    .foregroundStyle(selection.contains(dive.fingerprint)
                                                      ? Color.ocean : Color.secondary)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(candidate.summary.start.map {
+                                    Text(dive.start.map {
                                         $0.formatted(date: .abbreviated, time: .shortened)
                                     } ?? "Unknown date")
                                         .font(.headline)
                                         .foregroundStyle(.primary)
-                                    Text("\(candidate.summary.activity.label) · \(DiveRow.durationText(candidate.summary.duration)) · max \(candidate.summary.maxDepth, specifier: "%.1f") m")
+                                    Text(subtitle(for: dive))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -44,7 +74,7 @@ struct DiveImportPicker: View {
                         }
                     }
                 } header: {
-                    Text("\(candidates.count) new dive\(candidates.count == 1 ? "" : "s") on the device")
+                    Text("\(dives.count) new dive\(dives.count == 1 ? "" : "s") \(pending.sourceDescription)")
                 } footer: {
                     Text("Dives already in your logbook are not shown.")
                 }
@@ -56,15 +86,15 @@ struct DiveImportPicker: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button(selection.count == candidates.count ? "Deselect All" : "Select All") {
-                        selection = selection.count == candidates.count
-                            ? [] : Set(candidates.map(\.id))
+                    Button(selection.count == dives.count ? "Deselect All" : "Select All") {
+                        selection = selection.count == dives.count
+                            ? [] : Set(dives.map(\.fingerprint))
                     }
                 }
             }
             .safeAreaInset(edge: .bottom) {
                 Button {
-                    let picked = candidates.filter { selection.contains($0.id) }
+                    let picked = dives.filter { selection.contains($0.fingerprint) }
                     dismiss()
                     onImport(picked)
                 } label: {
@@ -78,6 +108,14 @@ struct DiveImportPicker: View {
                 .background(.regularMaterial)
             }
         }
+    }
+
+    private func subtitle(for dive: Dive) -> String {
+        var parts = [dive.activity.label,
+                     DiveRow.durationText(dive.duration),
+                     String(format: "max %.1f m", dive.maxDepth)]
+        if let site = dive.siteName, !site.isEmpty { parts.append(site) }
+        return parts.joined(separator: " · ")
     }
 
     private func toggle(_ id: String) {

@@ -9,8 +9,7 @@ struct LogbookView: View {
     @State private var syncProgress: DiveSyncProgress?
     @State private var syncError: String?
     @State private var lastSyncCount: Int?
-    @State private var candidates: [DiveCandidate] = []
-    @State private var showPicker = false
+    @State private var pendingImport: PendingImport?
     @State private var showFileImporter = false
 
     var body: some View {
@@ -102,9 +101,9 @@ struct LogbookView: View {
                 .disabled(!ble.state.isConnected || syncProgress != nil)
             }
         }
-        .sheet(isPresented: $showPicker) {
-            DiveImportPicker(candidates: candidates) { picked in
-                download(picked)
+        .sheet(item: $pendingImport) { pending in
+            DiveImportPicker(pending: pending) { picked in
+                complete(pending, picked: picked)
             }
         }
         .fileImporter(isPresented: $showFileImporter,
@@ -137,13 +136,25 @@ struct LogbookView: View {
                 if found.isEmpty {
                     lastSyncCount = 0
                 } else {
-                    candidates = found
-                    showPicker = true
+                    pendingImport = PendingImport(source: .device(found))
                 }
             } catch {
                 syncProgress = nil
                 syncError = error.localizedDescription
             }
+        }
+    }
+
+    /// Route the picker's selection to the right importer.
+    private func complete(_ pending: PendingImport, picked: [Dive]) {
+        let pickedIDs = Set(picked.map(\.fingerprint))
+        switch pending.source {
+        case .device(let candidates):
+            download(candidates.filter { pickedIDs.contains($0.summary.fingerprint) })
+        case .file(let dives):
+            let fresh = dives.filter { pickedIDs.contains($0.fingerprint) }
+            logbook.add(fresh)
+            lastSyncCount = fresh.count
         }
     }
 
@@ -181,8 +192,11 @@ struct LogbookView: View {
             let fresh = imported.filter {
                 !logbook.fingerprints.contains($0.fingerprint) && !logbook.containsSimilar($0)
             }
-            logbook.add(fresh)
-            lastSyncCount = fresh.count
+            if fresh.isEmpty {
+                lastSyncCount = 0
+            } else {
+                pendingImport = PendingImport(source: .file(fresh))
+            }
         } catch {
             syncError = "UDDF import failed: \(error.localizedDescription)"
         }
