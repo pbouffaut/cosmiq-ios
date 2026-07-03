@@ -1,5 +1,6 @@
 import CosmiqKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct LogbookView: View {
     @EnvironmentObject private var ble: CosmiqBLEManager
@@ -8,6 +9,9 @@ struct LogbookView: View {
     @State private var syncProgress: DiveSyncProgress?
     @State private var syncError: String?
     @State private var lastSyncCount: Int?
+    @State private var candidates: [DiveCandidate] = []
+    @State private var showPicker = false
+    @State private var showFileImporter = false
 
     var body: some View {
         List {
@@ -28,7 +32,7 @@ struct LogbookView: View {
             if let count = lastSyncCount {
                 Section {
                     Label(count == 0 ? "Logbook already up to date"
-                                     : "Downloaded \(count) new dive\(count == 1 ? "" : "s")",
+                                     : "Added \(count) new dive\(count == 1 ? "" : "s")",
                           systemImage: count == 0 ? "checkmark.circle" : "square.and.arrow.down")
                         .foregroundStyle(.green)
                 }
@@ -71,13 +75,22 @@ struct LogbookView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if !logbook.dives.isEmpty {
-                    ShareLink(
-                        item: UDDFFile(dives: logbook.dives),
-                        preview: SharePreview("CosmiQ Logbook.uddf")
-                    ) {
-                        Image(systemName: "square.and.arrow.up")
+                Menu {
+                    Button {
+                        showFileImporter = true
+                    } label: {
+                        Label("Import UDDF File…", systemImage: "square.and.arrow.down")
                     }
+                    if !logbook.dives.isEmpty {
+                        ShareLink(
+                            item: UDDFFile(dives: logbook.dives),
+                            preview: SharePreview("CosmiQ Logbook.uddf")
+                        ) {
+                            Label("Export Logbook (UDDF)", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -89,7 +102,24 @@ struct LogbookView: View {
                 .disabled(!ble.state.isConnected || syncProgress != nil)
             }
         }
+        .sheet(isPresented: $showPicker) {
+            DiveImportPicker(candidates: candidates) { picked in
+                download(picked)
+            }
+        }
+        .fileImporter(isPresented: $showFileImporter,
+                      allowedContentTypes: uddfTypes) { result in
+            importUDDF(result)
+        }
     }
+
+    private var uddfTypes: [UTType] {
+        var types: [UTType] = [.xml]
+        if let uddf = UTType(filenameExtension: "uddf") { types.insert(uddf, at: 0) }
+        return types
+    }
+
+    // MARK: Device sync (phase 1: list, phase 2: download selection)
 
     private func sync() {
         syncError = nil
@@ -97,11 +127,34 @@ struct LogbookView: View {
         syncProgress = DiveSyncProgress(phase: "Starting…", fraction: 0)
         let session = CosmiqSession(ble: ble)
         Task {
-            defer { syncProgress = nil }
             do {
-                let dives = try await session.downloadDives(
+                let found = try await session.fetchNewDiveSummaries(
                     knownFingerprints: logbook.fingerprints
                 ) { progress in
+                    syncProgress = progress
+                }
+                syncProgress = nil
+                if found.isEmpty {
+                    lastSyncCount = 0
+                } else {
+                    candidates = found
+                    showPicker = true
+                }
+            } catch {
+                syncProgress = nil
+                syncError = error.localizedDescription
+            }
+        }
+    }
+
+    private func download(_ picked: [DiveCandidate]) {
+        guard !picked.isEmpty else { return }
+        syncProgress = DiveSyncProgress(phase: "Starting download…", fraction: 0)
+        let session = CosmiqSession(ble: ble)
+        Task {
+            defer { syncProgress = nil }
+            do {
+                let dives = try await session.downloadProfiles(for: picked) { progress in
                     syncProgress = progress
                 }
                 logbook.add(dives)
@@ -109,6 +162,29 @@ struct LogbookView: View {
             } catch {
                 syncError = error.localizedDescription
             }
+        }
+    }
+
+    // MARK: UDDF file import
+
+    private func importUDDF(_ result: Result<URL, Error>) {
+        syncError = nil
+        lastSyncCount = nil
+        do {
+            let url = try result.get()
+            guard url.startAccessingSecurityScopedResource() else {
+                throw CocoaError(.fileReadNoPermission)
+            }
+            defer { url.stopAccessingSecurityScopedResource() }
+            let data = try Data(contentsOf: url)
+            let imported = try UDDFImporter.parse(data: data)
+            let fresh = imported.filter {
+                !logbook.fingerprints.contains($0.fingerprint) && !logbook.containsSimilar($0)
+            }
+            logbook.add(fresh)
+            lastSyncCount = fresh.count
+        } catch {
+            syncError = "UDDF import failed: \(error.localizedDescription)"
         }
     }
 }

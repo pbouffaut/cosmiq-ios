@@ -59,6 +59,18 @@ final class Logbook: ObservableObject {
         dives.first { $0.fingerprint == id }
     }
 
+    /// Fuzzy duplicate check for imports from other apps: same start time
+    /// (±3 min) and similar duration means it's almost certainly the same
+    /// dive, even though the fingerprints differ.
+    func containsSimilar(_ dive: Dive) -> Bool {
+        guard let incoming = dive.start else { return false }
+        return dives.contains { existing in
+            guard let start = existing.start ?? existing.userDate else { return false }
+            return abs(start.timeIntervalSince(incoming)) < 180
+                && abs(existing.duration - dive.duration) <= 60
+        }
+    }
+
     // MARK: iCloud
 
     private func activateICloud() async {

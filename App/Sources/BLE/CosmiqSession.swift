@@ -18,6 +18,19 @@ struct SettingsReadResult {
     var failedQueries: [UInt8]
 }
 
+/// A dive available on the device but not yet in the logbook: its header is
+/// downloaded (date, duration, depth), its profile is not.
+struct DiveCandidate: Identifiable {
+    /// 1-based index on the device (1 = most recent).
+    let deviceIndex: Int
+    let header: [UInt8]
+    /// Header-only parse: date, activity, duration and max depth are valid,
+    /// samples are empty until the profile is downloaded.
+    let summary: Dive
+
+    var id: String { summary.fingerprint }
+}
+
 /// High-level operations composed from BLE transfers. All calls are serialized
 /// by the caller (the UI performs one operation at a time).
 @MainActor
@@ -97,80 +110,77 @@ final class CosmiqSession {
 
     // MARK: Dive log download (protocol from libdivecomputer deepblu_cosmiq.c)
 
-    /// Download all dives not present in `knownFingerprints`. Headers of all
-    /// dives are fetched first (they're small); profiles only for new dives.
-    func downloadDives(knownFingerprints: Set<String>,
-                       progress: @escaping (DiveSyncProgress) -> Void) async throws -> [Dive] {
+    /// Phase 1: read all dive headers (fast — 36 bytes each) and return the
+    /// dives that aren't in the logbook yet, so the user can pick.
+    func fetchNewDiveSummaries(knownFingerprints: Set<String>,
+                               progress: @escaping (DiveSyncProgress) -> Void) async throws -> [DiveCandidate] {
         try await ble.exclusive {
-            try await downloadDivesLocked(knownFingerprints: knownFingerprints, progress: progress)
+            progress(DiveSyncProgress(phase: "Reading dive count…", fraction: 0))
+
+            try await Task.sleep(for: Self.interCommandGap)
+            let countReply = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.diveCount))
+            let diveCount = Int(countReply.payload.first ?? 0)
+            guard diveCount > 0 else { return [] }
+
+            var candidates: [DiveCandidate] = []
+            for index in 1...diveCount { // dive 1 is the most recent
+                progress(DiveSyncProgress(phase: "Reading dive list (\(index) of \(diveCount))…",
+                                          fraction: Double(index - 1) / Double(diveCount)))
+                try await Task.sleep(for: Self.interCommandGap)
+                let lengthReply = try await ble.transfer(
+                    CosmiqPacket(command: CosmiqCommand.diveHeader, payload: [UInt8(index)]))
+                let headerLength = Int(lengthReply.payload.first ?? 0)
+                guard headerLength == DiveParser.headerSize else {
+                    throw CosmiqProtocolError.malformedPacket("dive header length \(headerLength)")
+                }
+                let header = try await ble.receiveBulk(
+                    command: CosmiqCommand.diveHeaderData, totalBytes: headerLength)
+
+                let summary = try DiveParser.parse(data: Data(header))
+                if !knownFingerprints.contains(summary.fingerprint) {
+                    candidates.append(DiveCandidate(deviceIndex: index, header: header, summary: summary))
+                }
+            }
+            progress(DiveSyncProgress(phase: "Done", fraction: 1))
+            return candidates
         }
     }
 
-    private func downloadDivesLocked(knownFingerprints: Set<String>,
-                                     progress: @escaping (DiveSyncProgress) -> Void) async throws -> [Dive] {
-        progress(DiveSyncProgress(phase: "Reading dive count…", fraction: 0))
+    /// Phase 2: download the full profiles for the dives the user selected.
+    func downloadProfiles(for candidates: [DiveCandidate],
+                          progress: @escaping (DiveSyncProgress) -> Void) async throws -> [Dive] {
+        try await ble.exclusive {
+            var dives: [Dive] = []
+            for (position, candidate) in candidates.enumerated() {
+                let base = Double(position) / Double(candidates.count)
+                let span = 1.0 / Double(candidates.count)
+                progress(DiveSyncProgress(
+                    phase: "Downloading dive \(position + 1) of \(candidates.count)…",
+                    fraction: base))
 
-        try await Task.sleep(for: Self.interCommandGap)
-        let countReply = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.diveCount))
-        let diveCount = Int(countReply.payload.first ?? 0)
-        guard diveCount > 0 else { return [] }
+                try await Task.sleep(for: Self.interCommandGap)
+                let lengthReply = try await ble.transfer(
+                    CosmiqPacket(command: CosmiqCommand.diveProfile,
+                                 payload: [UInt8(candidate.deviceIndex)]))
+                guard lengthReply.payload.count >= 2 else {
+                    throw CosmiqProtocolError.malformedPacket("dive profile length reply")
+                }
+                let profileLength = Int(lengthReply.payload[0]) << 8 | Int(lengthReply.payload[1])
 
-        // Phase 1: headers. Dive 1 is the most recent.
-        var headers: [[UInt8]] = []
-        for index in 1...diveCount {
-            progress(DiveSyncProgress(phase: "Reading dive \(index) of \(diveCount)…",
-                                      fraction: 0.3 * Double(index - 1) / Double(diveCount)))
-            try await Task.sleep(for: Self.interCommandGap)
-            let lengthReply = try await ble.transfer(
-                CosmiqPacket(command: CosmiqCommand.diveHeader, payload: [UInt8(index)]))
-            let headerLength = Int(lengthReply.payload.first ?? 0)
-            guard headerLength == DiveParser.headerSize else {
-                throw CosmiqProtocolError.malformedPacket("dive header length \(headerLength)")
+                var record = candidate.header
+                if profileLength > 0 {
+                    let profile = try await ble.receiveBulk(
+                        command: CosmiqCommand.diveProfileData, totalBytes: profileLength) { received in
+                            progress(DiveSyncProgress(
+                                phase: "Downloading dive \(position + 1) of \(candidates.count)…",
+                                fraction: base + span * Double(received) / Double(profileLength)))
+                        }
+                    record += profile
+                }
+                dives.append(try DiveParser.parse(data: Data(record)))
             }
-            let header = try await ble.receiveBulk(
-                command: CosmiqCommand.diveHeaderData, totalBytes: headerLength)
-            headers.append(header)
+            progress(DiveSyncProgress(phase: "Done", fraction: 1))
+            return dives
         }
-
-        let newIndexes = headers.indices.filter { index in
-            guard let fingerprint = DiveParser.fingerprint(ofHeader: headers[index]) else { return false }
-            return !knownFingerprints.contains(fingerprint)
-        }
-        guard !newIndexes.isEmpty else {
-            progress(DiveSyncProgress(phase: "Logbook is up to date", fraction: 1))
-            return []
-        }
-
-        // Phase 2: profiles for new dives only.
-        var dives: [Dive] = []
-        for (position, index) in newIndexes.enumerated() {
-            let base = 0.3 + 0.7 * Double(position) / Double(newIndexes.count)
-            let span = 0.7 / Double(newIndexes.count)
-            progress(DiveSyncProgress(phase: "Downloading dive \(position + 1) of \(newIndexes.count)…",
-                                      fraction: base))
-
-            try await Task.sleep(for: Self.interCommandGap)
-            let lengthReply = try await ble.transfer(
-                CosmiqPacket(command: CosmiqCommand.diveProfile, payload: [UInt8(index + 1)]))
-            guard lengthReply.payload.count >= 2 else {
-                throw CosmiqProtocolError.malformedPacket("dive profile length reply")
-            }
-            let profileLength = Int(lengthReply.payload[0]) << 8 | Int(lengthReply.payload[1])
-
-            var record = headers[index]
-            if profileLength > 0 {
-                let profile = try await ble.receiveBulk(
-                    command: CosmiqCommand.diveProfileData, totalBytes: profileLength) { received in
-                        progress(DiveSyncProgress(
-                            phase: "Downloading dive \(position + 1) of \(newIndexes.count)…",
-                            fraction: base + span * Double(received) / Double(profileLength)))
-                    }
-                record += profile
-            }
-            dives.append(try DiveParser.parse(data: Data(record)))
-        }
-
-        progress(DiveSyncProgress(phase: "Done", fraction: 1))
-        return dives
     }
 }
