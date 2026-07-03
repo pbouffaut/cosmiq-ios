@@ -12,10 +12,16 @@ struct DiveProfileChart: View {
 
     @State private var selectedTime: Int?
 
+    /// Profile without the flat post-surfacing tail the device records.
+    private var samples: [DiveSample] { dive.trimmedSamples }
+
+    private var maxDepth: Double { samples.map(\.depth).max() ?? 0 }
+    private var lastMinute: Double { Double(samples.last?.time ?? 60) / 60.0 }
+
     private var selectedIndex: Int? {
-        guard let selectedTime, !dive.samples.isEmpty else { return nil }
-        return dive.samples.indices.min {
-            abs(dive.samples[$0].time - selectedTime) < abs(dive.samples[$1].time - selectedTime)
+        guard let selectedTime, !samples.isEmpty else { return nil }
+        return samples.indices.min {
+            abs(samples[$0].time - selectedTime) < abs(samples[$1].time - selectedTime)
         }
     }
 
@@ -31,7 +37,7 @@ struct DiveProfileChart: View {
     @ViewBuilder
     private var infoBar: some View {
         if let index = selectedIndex {
-            let sample = dive.samples[index]
+            let sample = samples[index]
             HStack(spacing: 0) {
                 readout(Self.clock(sample.time), "time", "clock")
                 readout(String(format: "%.1f m", sample.depth), "depth", "arrow.down.to.line")
@@ -70,8 +76,8 @@ struct DiveProfileChart: View {
     /// Vertical speed around the selected sample, in m/min. ↓ descending.
     private func verticalSpeed(at index: Int) -> String {
         guard index > 0 else { return "—" }
-        let current = dive.samples[index]
-        let previous = dive.samples[index - 1]
+        let current = samples[index]
+        let previous = samples[index - 1]
         let dt = Double(current.time - previous.time)
         guard dt > 0 else { return "—" }
         let rate = (current.depth - previous.depth) / dt * 60 // m/min, + = down
@@ -83,15 +89,15 @@ struct DiveProfileChart: View {
 
     private var chart: some View {
         Chart {
-            ForEach(dive.samples, id: \.time) { sample in
+            ForEach(samples, id: \.time) { sample in
                 AreaMark(
                     x: .value("Time", Double(sample.time) / 60.0),
-                    y: .value("Depth", -sample.depth)
+                    y: .value("Depth", -max(0, sample.depth))
                 )
                 .foregroundStyle(Theme.profileGradient)
                 LineMark(
                     x: .value("Time", Double(sample.time) / 60.0),
-                    y: .value("Depth", -sample.depth)
+                    y: .value("Depth", -max(0, sample.depth))
                 )
                 .foregroundStyle(Color.aqua)
                 .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
@@ -99,18 +105,20 @@ struct DiveProfileChart: View {
             }
 
             if let index = selectedIndex {
-                let sample = dive.samples[index]
+                let sample = samples[index]
                 RuleMark(x: .value("Time", Double(sample.time) / 60.0))
                     .foregroundStyle(Color.foam.opacity(0.7))
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                 PointMark(
                     x: .value("Time", Double(sample.time) / 60.0),
-                    y: .value("Depth", -sample.depth)
+                    y: .value("Depth", -max(0, sample.depth))
                 )
                 .symbolSize(90)
                 .foregroundStyle(Color.foam)
             }
         }
+        .chartXScale(domain: 0...max(lastMinute, 1))
+        .chartYScale(domain: (-(maxDepth * 1.08))...0)
         .chartXAxisLabel("minutes")
         .chartYAxis {
             AxisMarks { value in

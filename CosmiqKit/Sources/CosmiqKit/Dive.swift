@@ -84,6 +84,17 @@ public struct Dive: Codable, Equatable, Hashable, Identifiable, Sendable {
         guard !samples.isEmpty else { return nil }
         return samples.map(\.temperature).reduce(0, +) / Double(samples.count)
     }
+
+    /// Samples up to the end of the dive. The device keeps logging near-0 m
+    /// readings for a while after surfacing, so profiles grow a flat tail;
+    /// this cuts everything after the last sample deeper than 1 m, keeping
+    /// one extra sample so the curve closes at the surface.
+    public var trimmedSamples: [DiveSample] {
+        guard let lastDeep = samples.lastIndex(where: { $0.depth > 1.0 }) else {
+            return samples
+        }
+        return Array(samples[...Swift.min(lastDeep + 1, samples.count - 1)])
+    }
 }
 
 public enum DiveParser {

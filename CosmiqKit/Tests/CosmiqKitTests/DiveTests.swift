@@ -112,6 +112,30 @@ final class DiveTests: XCTestCase {
         XCTAssertTrue(uddf.contains("<temperature>301.65</temperature>"))
     }
 
+    func testTrimmedSamplesCutsSurfaceTail() throws {
+        var data = makeHeader()
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 2013) // ~10 m
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 3013) // ~20 m
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 1063) // ~0.5 m (surfacing)
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 1015) // surface tail
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 1013) // surface tail
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 1010) // below atmospheric
+
+        let dive = try DiveParser.parse(data: Data(data))
+        XCTAssertEqual(dive.samples.count, 6)
+        // Last deep sample is index 1; keep one surfacing sample after it.
+        XCTAssertEqual(dive.trimmedSamples.count, 3)
+        XCTAssertEqual(dive.trimmedSamples.last?.time, 60)
+    }
+
+    func testTrimmedSamplesKeepsAllWhenNoTail() throws {
+        var data = makeHeader()
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 2013)
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 3013)
+        let dive = try DiveParser.parse(data: Data(data))
+        XCTAssertEqual(dive.trimmedSamples.count, 2)
+    }
+
     func testDiveIsCodable() throws {
         var data = makeHeader()
         data += makeSample(temperatureDeciC: 285, pressureMillibar: 1513)
