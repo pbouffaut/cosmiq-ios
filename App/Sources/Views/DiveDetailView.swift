@@ -7,6 +7,7 @@ import SwiftUI
 struct DiveDetailView: View {
     @EnvironmentObject private var logbook: Logbook
     @State private var showEditor = false
+    @State private var showFullProfile = false
 
     /// Snapshot handed in by navigation; the live version comes from the
     /// logbook so metadata edits show immediately.
@@ -48,6 +49,21 @@ struct DiveDetailView: View {
         }
         .sheet(isPresented: $showEditor) {
             DiveEditView(dive: current)
+        }
+        .fullScreenCover(isPresented: $showFullProfile) {
+            DiveProfileFullScreenView(dive: current)
+        }
+        .onAppear {
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIDevice.orientationDidChangeNotification)) { _ in
+            let orientation = UIDevice.current.orientation
+            if orientation.isLandscape && !current.samples.isEmpty {
+                showFullProfile = true
+            } else if orientation == .portrait {
+                showFullProfile = false
+            }
         }
     }
 
@@ -101,34 +117,23 @@ struct DiveDetailView: View {
     }
 
     private var profileSection: some View {
-        Section("Dive Profile") {
-            Chart(current.samples, id: \.time) { sample in
-                AreaMark(
-                    x: .value("Time", Double(sample.time) / 60.0),
-                    y: .value("Depth", -sample.depth)
-                )
-                .foregroundStyle(Theme.profileGradient)
-                LineMark(
-                    x: .value("Time", Double(sample.time) / 60.0),
-                    y: .value("Depth", -sample.depth)
-                )
-                .foregroundStyle(Color.aqua)
-                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                .interpolationMethod(.monotone)
-            }
-            .chartXAxisLabel("minutes")
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        if let depth = value.as(Double.self) {
-                            Text("\(-depth, specifier: "%.0f") m")
-                        }
-                    }
+        Section {
+            DiveProfileChart(dive: current)
+                .frame(height: 280)
+                .listRowInsets(EdgeInsets(top: 16, leading: 8, bottom: 16, trailing: 16))
+        } header: {
+            HStack {
+                Text("Dive Profile")
+                Spacer()
+                Button {
+                    showFullProfile = true
+                } label: {
+                    Label("Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption)
                 }
             }
-            .frame(height: 220)
-            .listRowInsets(EdgeInsets(top: 16, leading: 8, bottom: 16, trailing: 16))
+        } footer: {
+            Text("Tap Full Screen or rotate your iPhone for a bigger view.")
         }
     }
 

@@ -26,6 +26,8 @@ targets:
           UIColorName: LaunchBackground
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         NSBluetoothAlwaysUsageDescription: >-
           CosmiQ Companion talks to your COSMIQ+ dive computer over Bluetooth
           to change its settings and download your dive logs.
