@@ -33,7 +33,7 @@ struct ConnectView: View {
                         } label: {
                             HStack {
                                 VStack(alignment: .leading) {
-                                    Text(device.name).font(.headline)
+                                    Text(device.displayName).font(.headline)
                                     Text("Signal: \(device.rssi) dBm")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -54,7 +54,7 @@ struct ConnectView: View {
                     }
                 }
             } footer: {
-                Text("Turn the dive computer on and keep it close to your iPhone. It advertises as “COSMIQ” or “Deepblu”.")
+                Text("Turn the dive computer on and keep it close to your iPhone. It usually advertises as “COSMIQ” or “Deepblu”; a Gen 5 may briefly appear as “Unnamed dive computer” until its name comes in. If nothing shows up, the Diagnostics tab lists every device the scan saw.")
             }
         }
         .safeAreaInset(edge: .bottom) {

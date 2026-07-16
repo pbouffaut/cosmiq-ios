@@ -28,6 +28,7 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
         let name: String
         let rssi: Int
         var id: UUID { peripheral.identifier }
+        var displayName: String { name.isEmpty ? "Unnamed dive computer" : name }
     }
 
     @Published private(set) var state: ConnectionState = .idle
@@ -42,6 +43,9 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     private var central: CBCentralManager?
     /// Scan requested while the central was still powering on.
     private var wantsScan = false
+    /// Peripherals already reported to the packet log this scan.
+    private var scanLogged: Set<UUID> = []
+    private var connectTimeoutTask: Task<Void, Never>?
     private var peripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxBuffer: [UInt8] = []
@@ -70,10 +74,15 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
             return
         }
         discovered = []
+        scanLogged = []
         state = .scanning
-        // The COSMIQ+ advertises the NUS service; scan broadly and filter by
-        // name (like the web controller) so renamed units still show up.
-        central.scanForPeripherals(withServices: nil, options: nil)
+        // Scan broadly and filter in didDiscover: the Gen 5 doesn't always put
+        // its name in the initial advertising packet, so a service filter or a
+        // one-shot name check can miss it. Allowing duplicates lets a later
+        // callback deliver the scan-response name for a device we first saw
+        // nameless.
+        central.scanForPeripherals(withServices: nil,
+                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
     }
 
     func stopScan() {
@@ -86,9 +95,18 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
         stopScan()
         state = .connecting
         peripheral = device.peripheral
-        deviceName = device.name
+        deviceName = device.displayName
         device.peripheral.delegate = self
         ensureCentral().connect(device.peripheral, options: nil)
+        // CoreBluetooth never times out a connect on its own; without this a
+        // sleeping device leaves the UI on "Connecting…" forever.
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, let self, self.state == .connecting else { return }
+            self.state = .failed("Connection timed out. Wake the device and try again.")
+            self.disconnect()
+        }
     }
 
     func disconnect() {
@@ -106,6 +124,8 @@ final class CosmiqBLEManager: NSObject, ObservableObject {
     }
 
     private func cleanupConnection(error: Error?) {
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
         peripheral = nil
         txCharacteristic = nil
         rxBuffer.removeAll()
@@ -308,13 +328,35 @@ extension CosmiqBLEManager: CBCentralManagerDelegate, CBPeripheralDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                                     advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        let advertisedServices = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
         let rssi = RSSI.intValue
         Task { @MainActor in
             let name = advertisedName ?? peripheral.name ?? ""
-            // Same name filter as the web controller.
-            guard name.hasPrefix("COS") || name.hasPrefix("Deep") else { return }
+            // Web-controller name prefixes, but case-insensitive like
+            // libdivecomputer — plus anything advertising the Nordic UART
+            // service, so a unit whose name isn't in the advertisement (or was
+            // renamed) still shows up.
+            let lowered = name.lowercased()
+            let nameMatches = lowered.hasPrefix("cos") || lowered.hasPrefix("deep")
+            let advertisesNUS = advertisedServices.contains(Self.serviceUUID)
+            let matched = nameMatches || advertisesNUS
+
+            // One diagnostics line per peripheral per scan, including named
+            // devices we rejected — that's how a tester tells us what their
+            // unit actually advertises as.
+            if self.scanLogged.insert(peripheral.identifier).inserted, matched || !name.isEmpty {
+                let label = name.isEmpty ? "(no name)" : name
+                self.appendLog("SCAN \(matched ? "+" : "-") \(label) \(rssi)dBm\(advertisesNUS ? " [NUS]" : "")")
+            }
+            guard matched else { return }
+
             if let index = self.discovered.firstIndex(where: { $0.id == peripheral.identifier }) {
-                self.discovered[index] = DiscoveredDevice(peripheral: peripheral, name: name, rssi: rssi)
+                let existing = self.discovered[index]
+                // Keep a name we already learned; refresh RSSI only on real
+                // movement so allow-duplicates doesn't thrash the UI.
+                let bestName = name.isEmpty ? existing.name : name
+                guard bestName != existing.name || abs(existing.rssi - rssi) >= 5 else { return }
+                self.discovered[index] = DiscoveredDevice(peripheral: peripheral, name: bestName, rssi: rssi)
             } else {
                 self.discovered.append(DiscoveredDevice(peripheral: peripheral, name: name, rssi: rssi))
             }
@@ -375,6 +417,8 @@ extension CosmiqBLEManager: CBCentralManagerDelegate, CBPeripheralDelegate {
                                 error: Error?) {
         Task { @MainActor in
             if self.txCharacteristic != nil, characteristic.isNotifying {
+                self.connectTimeoutTask?.cancel()
+                self.connectTimeoutTask = nil
                 self.state = .ready
             }
         }
