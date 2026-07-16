@@ -22,6 +22,12 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: CosmiQ Companion
+        # Keep the bundle version tied to MARKETING_VERSION /
+        # CURRENT_PROJECT_VERSION above — without these, XcodeGen writes a
+        # hardcoded 1.0/1 into Info.plist and App Store uploads are rejected
+        # once 1.0 is approved.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen:
           UIColorName: LaunchBackground
         UISupportedInterfaceOrientations:
@@ -39,8 +45,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        MARKETING_VERSION: 1.0.0
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 1.1.0
+        CURRENT_PROJECT_VERSION: 2
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: Q9AA7ZL33M
         PRODUCT_BUNDLE_IDENTIFIER: com.pbouffaut.cosmiq
