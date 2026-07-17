@@ -39,6 +39,39 @@ struct AboutView: View {
                 .listRowBackground(Color.clear)
             }
 
+            if !tipJar.products.isEmpty {
+                Section {
+                    Text("This app is free — no ads, no subscriptions — and it will stay that way. But air, sadly, is not. If CosmiQ Companion saved your logbook and you can afford it, you can top up my tanks. Send whatever feels right.")
+                        .font(.subheadline)
+
+                    if tipJar.phase == .thanked {
+                        HStack(spacing: 10) {
+                            SeaBadge(systemImage: "heart.fill")
+                            Text("Tanks topped up — thank you! See you down there.")
+                                .font(.subheadline.weight(.medium))
+                        }
+                    }
+
+                    ForEach(tipJar.products) { product in
+                        Button {
+                            Task { await tipJar.tip(product) }
+                        } label: {
+                            HStack {
+                                Text(product.displayName)
+                                Spacer()
+                                Text(product.displayPrice)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .disabled(tipJar.phase == .purchasing)
+                    }
+                } header: {
+                    Text("Refill My Tanks")
+                } footer: {
+                    Text("Completely optional — a tip changes nothing in the app except the developer's air supply.")
+                }
+            }
+
             Section("Privacy") {
                 VStack(alignment: .leading, spacing: 10) {
                     bullet("iphone", "Your dives, settings and notes are stored on this device and — if you use iCloud — in your own private iCloud Drive, so your logbook survives reinstalling the app. There is no account and no third-party server.")
@@ -90,39 +123,6 @@ struct AboutView: View {
                 }
                 Link(destination: URL(string: "mailto:pbouffaut@gmail.com")!) {
                     Label("pbouffaut@gmail.com", systemImage: "envelope")
-                }
-            }
-
-            if !tipJar.products.isEmpty {
-                Section {
-                    Text("This app is free — no ads, no subscriptions — and it will stay that way. But air, sadly, is not. If CosmiQ Companion saved your logbook and you can afford it, you can top up my tanks. Send whatever feels right.")
-                        .font(.subheadline)
-
-                    if tipJar.phase == .thanked {
-                        HStack(spacing: 10) {
-                            SeaBadge(systemImage: "heart.fill")
-                            Text("Tanks topped up — thank you! See you down there.")
-                                .font(.subheadline.weight(.medium))
-                        }
-                    }
-
-                    ForEach(tipJar.products) { product in
-                        Button {
-                            Task { await tipJar.tip(product) }
-                        } label: {
-                            HStack {
-                                Text(product.displayName)
-                                Spacer()
-                                Text(product.displayPrice)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .disabled(tipJar.phase == .purchasing)
-                    }
-                } header: {
-                    Text("Refill My Tanks")
-                } footer: {
-                    Text("Completely optional — a tip changes nothing in the app except the developer's air supply.")
                 }
             }
 
