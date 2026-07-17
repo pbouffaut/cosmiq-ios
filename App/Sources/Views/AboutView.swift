@@ -1,6 +1,9 @@
+import StoreKit
 import SwiftUI
 
 struct AboutView: View {
+    @StateObject private var tipJar = TipJar()
+
     private var version: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
@@ -90,6 +93,39 @@ struct AboutView: View {
                 }
             }
 
+            if !tipJar.products.isEmpty {
+                Section {
+                    Text("This app is free — no ads, no subscriptions — and it will stay that way. But air, sadly, is not. If CosmiQ Companion saved your logbook and you can afford it, you can top up my tanks. Send whatever feels right.")
+                        .font(.subheadline)
+
+                    if tipJar.phase == .thanked {
+                        HStack(spacing: 10) {
+                            SeaBadge(systemImage: "heart.fill")
+                            Text("Tanks topped up — thank you! See you down there.")
+                                .font(.subheadline.weight(.medium))
+                        }
+                    }
+
+                    ForEach(tipJar.products) { product in
+                        Button {
+                            Task { await tipJar.tip(product) }
+                        } label: {
+                            HStack {
+                                Text(product.displayName)
+                                Spacer()
+                                Text(product.displayPrice)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .disabled(tipJar.phase == .purchasing)
+                    }
+                } header: {
+                    Text("Refill My Tanks")
+                } footer: {
+                    Text("Completely optional — a tip changes nothing in the app except the developer's air supply.")
+                }
+            }
+
             Section {
             } footer: {
                 Text("Made with ❤️ for a dive computer that deserved better than a dead server.")
@@ -98,6 +134,7 @@ struct AboutView: View {
             }
         }
         .navigationTitle("About")
+        .task { await tipJar.load() }
     }
 
     private func bullet(_ systemImage: String, _ text: String) -> some View {
