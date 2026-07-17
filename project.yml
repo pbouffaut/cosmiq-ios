@@ -56,3 +56,22 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         ENABLE_USER_SCRIPT_SANDBOXING: true
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+schemes:
+  CosmiqCompanion:
+    build:
+      targets:
+        CosmiqCompanion: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  # Same app, but StoreKit is served by the local Products.storekit file —
+  # for testing the tip jar UI without App Store Connect. Purchases are fake.
+  CosmiqCompanion (Local StoreKit):
+    build:
+      targets:
+        CosmiqCompanion: all
+    run:
+      config: Debug
+      storeKitConfiguration: App/Products.storekit

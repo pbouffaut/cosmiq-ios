@@ -1,4 +1,5 @@
 import Foundation
+import os
 import StoreKit
 
 /// Consumable "tank refill" tips, per App Store guideline 3.1.1: voluntary
@@ -41,14 +42,19 @@ final class TipJar: ObservableObject {
 
     deinit { updatesTask?.cancel() }
 
+    private let log = Logger(subsystem: "com.pbouffaut.CosmiqCompanion", category: "tipjar")
+
     func load() async {
         guard products.isEmpty else { return }
         do {
             products = try await Product.products(for: Self.productIDs)
                 .sorted { $0.price < $1.price }
             if !products.isEmpty { phase = .ready }
+            let missing = Set(Self.productIDs).subtracting(products.map(\.id))
+            log.info("Loaded \(self.products.count) tip product(s)\(missing.isEmpty ? "" : "; missing: \(missing.joined(separator: ", "))")")
         } catch {
             phase = .unavailable
+            log.error("Tip products failed to load: \(error)")
         }
     }
 
