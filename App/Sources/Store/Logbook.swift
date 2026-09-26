@@ -27,8 +27,50 @@ final class Logbook: ObservableObject {
         dives = Self.read(from: localURL) ?? []
         sortDives()
         if fileURL == nil {
+            migrateIfNeeded()
             Task { await activateICloud() }
         }
+    }
+
+    // MARK: Migration
+
+    /// Bump when DiveParser changes how stored raw bytes are interpreted, so
+    /// existing logbooks get re-parsed once. 2 = 1.3.0 header corrections
+    /// (salt flag, 0x80B4 sentinel, hard-coded intervals, positional times).
+    private static let parserVersion = 2
+    private static let parserVersionKey = "logbookParserVersion"
+
+    private func migrateIfNeeded() {
+        guard UserDefaults.standard.integer(forKey: Self.parserVersionKey) < Self.parserVersion else {
+            return
+        }
+        if reparseFromRawData() {
+            sortDives() // corrected freedive durations don't move dives, but stay safe
+            save()
+        }
+        UserDefaults.standard.set(Self.parserVersion, forKey: Self.parserVersionKey)
+        log.info("Logbook re-parsed at parser version \(Self.parserVersion)")
+    }
+
+    /// Re-run the parser on each dive's stored device bytes, keeping the
+    /// user's metadata. Dives without raw bytes (UDDF imports) are untouched.
+    /// Returns true when anything changed.
+    private func reparseFromRawData() -> Bool {
+        var changed = false
+        dives = dives.map { old in
+            guard !old.rawData.isEmpty,
+                  var fresh = try? DiveParser.parse(data: old.rawData) else { return old }
+            fresh.name = old.name
+            fresh.siteName = old.siteName
+            fresh.notes = old.notes
+            fresh.latitude = old.latitude
+            fresh.longitude = old.longitude
+            fresh.userDate = old.userDate
+            fresh.profileNote = old.profileNote
+            if fresh != old { changed = true }
+            return fresh
+        }
+        return changed
     }
 
     // MARK: Mutations
@@ -113,6 +155,7 @@ final class Logbook: ObservableObject {
         cloudURL = fileURL
         storedInICloud = true
         merge(cloudDives)
+        _ = reparseFromRawData() // cloud copy may predate the current parser
         save()
         log.info("iCloud logbook active (\(self.dives.count) dives after merge)")
     }
