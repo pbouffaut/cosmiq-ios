@@ -89,7 +89,11 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(CosmiqSettingWrite.screenTimeout(seconds: 15).payload, [0x00, 0x0F])
         XCTAssertEqual(CosmiqSettingWrite.scubaDepthAlarm(meters: 30).payload, [0x0F, 0xA0])
         XCTAssertEqual(CosmiqSettingWrite.scubaTimeAlarm(minutes: 45).payload, [0x00, 0x2D])
-        XCTAssertEqual(CosmiqSettingWrite.freediveMaxTime(seconds: 60).payload, [0x14, 0x06])
+        XCTAssertEqual(CosmiqSettingWrite.freediveMaxTime(seconds: 60, alarm3Meters: nil).payload, [0x14, 0x06])
+        // Alarm 3 must round-trip through the max-time packet, not be reset.
+        XCTAssertEqual(CosmiqSettingWrite.freediveMaxTime(seconds: 60, alarm3Meters: 30).payload, [0x19, 0x06])
+        XCTAssertEqual(CosmiqSettingWrite.scubaDepthAlarm(meters: 99).payload, [0x17, 0x70], "clamped to 50 m")
+        XCTAssertEqual(CosmiqSettingWrite.scubaTimeAlarm(minutes: 5).payload, [0x00, 0x0A], "clamped to 10 min")
         XCTAssertEqual(CosmiqSettingWrite.airMix(percent: 32).payload, [0x20])
         XCTAssertEqual(CosmiqSettingWrite.ppo2(bar: 1.4).payload, [0x0E])
         XCTAssertEqual(CosmiqSettingWrite.safetyFactor(.normal).payload, [0x00, 0x01])

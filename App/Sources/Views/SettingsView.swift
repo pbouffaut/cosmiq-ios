@@ -58,8 +58,13 @@ final class SettingsModel: ObservableObject {
     }
 
     func setFreediveAlarm(number: Int, meters: Int) {
+        // Alarms write in pairs; sending a guessed partner value would
+        // overwrite it on the device (cosmiq5-web v69 finding).
         let partnerIndex = number.isMultiple(of: 2) ? number - 2 : number
-        let partner = settings.freediveDepthAlarms[partnerIndex] ?? 5
+        guard let partner = settings.freediveDepthAlarms[partnerIndex] else {
+            errorMessage = "Alarm \(partnerIndex + 1) hasn't been read from the device yet — pull down to refresh, then try again."
+            return
+        }
         do {
             apply(try CosmiqSettingWrite.freediveDepthAlarm(
                 number: number, meters: meters, partnerMeters: partner))
@@ -139,7 +144,8 @@ struct SettingsView: View {
     private var deviceSection: some View {
         Section("Device") {
             if let info = model.deviceInfo {
-                LabeledContent("Firmware", value: "\(info.firmware)")
+                LabeledContent("Model", value: info.model)
+                LabeledContent("Firmware", value: info.firmwareVersion)
                 LabeledContent("Serial", value: info.serial)
             }
             Button {
@@ -230,14 +236,14 @@ struct SettingsView: View {
             stepperRow(
                 title: "Depth Alarm",
                 value: model.settings.scubaDepthAlarmMeters.map { Int($0) },
-                range: 5...60, unit: "m",
+                range: 5...50, unit: "m",
                 onCommit: { model.apply(CosmiqSettingWrite.scubaDepthAlarm(meters: $0)) }
             )
 
             stepperRow(
                 title: "Time Alarm",
                 value: model.settings.scubaTimeAlarmMinutes,
-                range: 1...99, unit: "min",
+                range: 10...120, unit: "min",
                 onCommit: { model.apply(CosmiqSettingWrite.scubaTimeAlarm(minutes: $0)) }
             )
         }
@@ -249,14 +255,19 @@ struct SettingsView: View {
                 title: "Max Time",
                 value: model.settings.freediveMaxTimeSeconds,
                 range: 30...600, step: 5, unit: "s",
-                onCommit: { model.apply(CosmiqSettingWrite.freediveMaxTime(seconds: $0)) }
+                onCommit: {
+                    // 0x26 also carries depth alarm 3 — round-trip the
+                    // current value so it isn't reset to 25 m.
+                    model.apply(CosmiqSettingWrite.freediveMaxTime(
+                        seconds: $0, alarm3Meters: model.settings.freediveDepthAlarms[2]))
+                }
             )
 
             ForEach(1...(hasExtendedAlarms ? 6 : 2), id: \.self) { number in
                 stepperRow(
                     title: "Depth Alarm \(number)",
                     value: model.settings.freediveDepthAlarms[number - 1],
-                    range: 5...120, unit: "m",
+                    range: 5...80, unit: "m",
                     onCommit: { model.setFreediveAlarm(number: number, meters: $0) }
                 )
             }

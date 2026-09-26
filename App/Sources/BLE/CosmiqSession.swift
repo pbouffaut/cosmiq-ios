@@ -2,7 +2,10 @@ import CosmiqKit
 import Foundation
 
 struct CosmiqDeviceInfo: Equatable {
-    let firmware: Int
+    /// "COSMIQ", "COSMIQ+" or "COSMIQ 5", from the top bits of the firmware byte.
+    let model: String
+    /// e.g. "2.2" — low 6 bits of the firmware byte, tenths.
+    let firmwareVersion: String
     let serial: String
 }
 
@@ -52,9 +55,12 @@ final class CosmiqSession {
             let firmware = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.queryFirmware))
             try await Task.sleep(for: Self.interCommandGap)
             let mac = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.queryMacAddress))
+            let fw = firmware.payload.first ?? 0
+            let models = [0: "COSMIQ", 1: "COSMIQ+", 2: "COSMIQ 5"]
             return CosmiqDeviceInfo(
-                firmware: Int((firmware.payload.first ?? 0) & 0x3F),
-                serial: mac.payload.map { String(format: "%02X", $0) }.joined(separator: ":")
+                model: models[Int(fw >> 6)] ?? "Cosmiq",
+                firmwareVersion: String(format: "%.1f", Double(fw & 0x3F) / 10),
+                serial: mac.payload.reversed().map { String(format: "%02X", $0) }.joined(separator: ":")
             )
         }
     }
@@ -110,18 +116,26 @@ final class CosmiqSession {
 
     // MARK: Dive log download (protocol from libdivecomputer deepblu_cosmiq.c)
 
+    struct DiveCatalog {
+        var candidates: [DiveCandidate]
+        /// Every header on the device, in device order — required to resolve
+        /// the sector-wrap firmware bug when downloading profiles.
+        var allHeaders: [[UInt8]]
+    }
+
     /// Phase 1: read all dive headers (fast — 36 bytes each) and return the
     /// dives that aren't in the logbook yet, so the user can pick.
     func fetchNewDiveSummaries(knownFingerprints: Set<String>,
-                               progress: @escaping (DiveSyncProgress) -> Void) async throws -> [DiveCandidate] {
+                               progress: @escaping (DiveSyncProgress) -> Void) async throws -> DiveCatalog {
         try await ble.exclusive {
             progress(DiveSyncProgress(phase: "Reading dive count…", fraction: 0))
 
             try await Task.sleep(for: Self.interCommandGap)
             let countReply = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.diveCount))
             let diveCount = Int(countReply.payload.first ?? 0)
-            guard diveCount > 0 else { return [] }
+            guard diveCount > 0 else { return DiveCatalog(candidates: [], allHeaders: []) }
 
+            var allHeaders: [[UInt8]] = []
             var candidates: [DiveCandidate] = []
             for index in 1...diveCount { // dive 1 is the most recent
                 progress(DiveSyncProgress(phase: "Reading dive list (\(index) of \(diveCount))…",
@@ -136,51 +150,84 @@ final class CosmiqSession {
                 let header = try await ble.receiveBulk(
                     command: CosmiqCommand.diveHeaderData, totalBytes: headerLength)
 
+                allHeaders.append(header)
                 let summary = try DiveParser.parse(data: Data(header))
                 if !knownFingerprints.contains(summary.fingerprint) {
                     candidates.append(DiveCandidate(deviceIndex: index, header: header, summary: summary))
                 }
             }
             progress(DiveSyncProgress(phase: "Done", fraction: 1))
-            return candidates
+            return DiveCatalog(candidates: candidates, allHeaders: allHeaders)
         }
     }
 
-    /// Phase 2: download the full profiles for the dives the user selected.
-    func downloadProfiles(for candidates: [DiveCandidate],
+    /// Phase 2: download the full profiles for the dives the user selected,
+    /// routing each read through the slot that physically holds its samples
+    /// (sector-wrap firmware bug — see DiveParser.profileSlot). Dives whose
+    /// profile is gone are still returned, header-only, with a note.
+    func downloadProfiles(for candidates: [DiveCandidate], allHeaders: [[UInt8]],
                           progress: @escaping (DiveSyncProgress) -> Void) async throws -> [Dive] {
         try await ble.exclusive {
+            var slotCache: [Int: [UInt8]] = [:] // 0-based slot -> raw body
             var dives: [Dive] = []
             for (position, candidate) in candidates.enumerated() {
                 let base = Double(position) / Double(candidates.count)
                 let span = 1.0 / Double(candidates.count)
-                progress(DiveSyncProgress(
-                    phase: "Downloading dive \(position + 1) of \(candidates.count)…",
-                    fraction: base))
+                let phase = "Downloading dive \(position + 1) of \(candidates.count)…"
+                progress(DiveSyncProgress(phase: phase, fraction: base))
 
-                try await Task.sleep(for: Self.interCommandGap)
-                let lengthReply = try await ble.transfer(
-                    CosmiqPacket(command: CosmiqCommand.diveProfile,
-                                 payload: [UInt8(candidate.deviceIndex)]))
-                guard lengthReply.payload.count >= 2 else {
-                    throw CosmiqProtocolError.malformedPacket("dive profile length reply")
-                }
-                let profileLength = Int(lengthReply.payload[0]) << 8 | Int(lengthReply.payload[1])
-
-                var record = candidate.header
-                if profileLength > 0 {
-                    let profile = try await ble.receiveBulk(
-                        command: CosmiqCommand.diveProfileData, totalBytes: profileLength) { received in
-                            progress(DiveSyncProgress(
-                                phase: "Downloading dive \(position + 1) of \(candidates.count)…",
-                                fraction: base + span * Double(received) / Double(profileLength)))
+                let need = DiveParser.sampleCount(ofHeader: candidate.header) * DiveParser.sampleSize
+                let slot = DiveParser.profileSlot(forDiveAt: candidate.deviceIndex - 1,
+                                                  headers: allHeaders)
+                var body: [UInt8] = []
+                var note: String?
+                switch slot {
+                case .own(let index), .recovered(let index):
+                    if need > 0 {
+                        if slotCache[index] == nil {
+                            slotCache[index] = try await readProfileBody(
+                                slotIndex: index,
+                                progress: { fraction in
+                                    progress(DiveSyncProgress(phase: phase,
+                                                              fraction: base + span * fraction))
+                                })
                         }
-                    record += profile
+                        body = DiveParser.stripErased(Array(slotCache[index]!.prefix(need)))
+                        if case .recovered = slot {
+                            note = body.count >= need
+                                ? "Profile recovered through an older dive's slot (firmware storage bug)."
+                                : "Partial profile: \(body.count / 4) of \(need / 4) samples survived the firmware storage bug."
+                        }
+                    }
+                case .overwritten:
+                    note = "Profile overwritten by a newer dive (firmware storage bug). Summary data is intact."
+                case .unreachable:
+                    note = "Profile stored in an unreachable flash sector (firmware storage bug). Summary data is intact."
                 }
-                dives.append(try DiveParser.parse(data: Data(record)))
+
+                var dive = try DiveParser.parse(data: Data(candidate.header + body))
+                dive.profileNote = note
+                dives.append(dive)
             }
             progress(DiveSyncProgress(phase: "Done", fraction: 1))
             return dives
         }
+    }
+
+    /// One 0x43/0x44 profile read for a 0-based slot index.
+    private func readProfileBody(slotIndex: Int,
+                                 progress: @escaping (Double) -> Void) async throws -> [UInt8] {
+        try await Task.sleep(for: Self.interCommandGap)
+        let lengthReply = try await ble.transfer(
+            CosmiqPacket(command: CosmiqCommand.diveProfile, payload: [UInt8(slotIndex + 1)]))
+        guard lengthReply.payload.count >= 2 else {
+            throw CosmiqProtocolError.malformedPacket("dive profile length reply")
+        }
+        let profileLength = Int(lengthReply.payload[0]) << 8 | Int(lengthReply.payload[1])
+        guard profileLength > 0 else { return [] }
+        return try await ble.receiveBulk(
+            command: CosmiqCommand.diveProfileData, totalBytes: profileLength) { received in
+                progress(Double(received) / Double(profileLength))
+            }
     }
 }

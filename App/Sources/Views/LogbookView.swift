@@ -127,16 +127,17 @@ struct LogbookView: View {
         let session = CosmiqSession(ble: ble)
         Task {
             do {
-                let found = try await session.fetchNewDiveSummaries(
+                let catalog = try await session.fetchNewDiveSummaries(
                     knownFingerprints: logbook.fingerprints
                 ) { progress in
                     syncProgress = progress
                 }
                 syncProgress = nil
-                if found.isEmpty {
+                if catalog.candidates.isEmpty {
                     lastSyncCount = 0
                 } else {
-                    pendingImport = PendingImport(source: .device(found))
+                    pendingImport = PendingImport(
+                        source: .device(catalog.candidates, allHeaders: catalog.allHeaders))
                 }
             } catch {
                 syncProgress = nil
@@ -149,8 +150,9 @@ struct LogbookView: View {
     private func complete(_ pending: PendingImport, picked: [Dive]) {
         let pickedIDs = Set(picked.map(\.fingerprint))
         switch pending.source {
-        case .device(let candidates):
-            download(candidates.filter { pickedIDs.contains($0.summary.fingerprint) })
+        case .device(let candidates, let allHeaders):
+            download(candidates.filter { pickedIDs.contains($0.summary.fingerprint) },
+                     allHeaders: allHeaders)
         case .file(let dives):
             let fresh = dives.filter { pickedIDs.contains($0.fingerprint) }
             logbook.add(fresh)
@@ -158,14 +160,15 @@ struct LogbookView: View {
         }
     }
 
-    private func download(_ picked: [DiveCandidate]) {
+    private func download(_ picked: [DiveCandidate], allHeaders: [[UInt8]]) {
         guard !picked.isEmpty else { return }
         syncProgress = DiveSyncProgress(phase: "Starting download…", fraction: 0)
         let session = CosmiqSession(ble: ble)
         Task {
             defer { syncProgress = nil }
             do {
-                let dives = try await session.downloadProfiles(for: picked) { progress in
+                let dives = try await session.downloadProfiles(for: picked,
+                                                               allHeaders: allHeaders) { progress in
                     syncProgress = progress
                 }
                 logbook.add(dives)

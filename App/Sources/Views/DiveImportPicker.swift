@@ -5,7 +5,7 @@ import SwiftUI
 /// either found on the device during sync, or parsed from a UDDF file.
 struct PendingImport: Identifiable {
     enum Source {
-        case device([DiveCandidate])
+        case device([DiveCandidate], allHeaders: [[UInt8]])
         case file([Dive])
     }
 
@@ -16,7 +16,7 @@ struct PendingImport: Identifiable {
     /// full parsed dives for file imports.
     var summaries: [Dive] {
         switch source {
-        case .device(let candidates): return candidates.map(\.summary)
+        case .device(let candidates, _): return candidates.map(\.summary)
         case .file(let dives): return dives
         }
     }

@@ -11,6 +11,8 @@ import os
 @MainActor
 final class CosmiqBLEManager: NSObject, ObservableObject {
     static let serviceUUID = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+    static let writeCharacteristicUUID = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
+    static let notifyCharacteristicUUID = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
 
     enum ConnectionState: Equatable {
         case bluetoothOff
@@ -400,14 +402,17 @@ extension CosmiqBLEManager: CBCentralManagerDelegate, CBPeripheralDelegate {
                                 error: Error?) {
         Task { @MainActor in
             guard let characteristics = service.characteristics else { return }
-            for characteristic in characteristics {
-                if characteristic.properties.contains(.write)
-                    || characteristic.properties.contains(.writeWithoutResponse) {
-                    self.txCharacteristic = characteristic
+            // Select by the Nordic UART UUIDs; fall back to properties for
+            // units exposing non-standard characteristics.
+            let tx = characteristics.first { $0.uuid == Self.writeCharacteristicUUID }
+                ?? characteristics.first {
+                    $0.properties.contains(.write) || $0.properties.contains(.writeWithoutResponse)
                 }
-                if characteristic.properties.contains(.notify) {
-                    peripheral.setNotifyValue(true, for: characteristic)
-                }
+            let rx = characteristics.first { $0.uuid == Self.notifyCharacteristicUUID }
+                ?? characteristics.first { $0.properties.contains(.notify) }
+            self.txCharacteristic = tx
+            if let rx {
+                peripheral.setNotifyValue(true, for: rx)
             }
         }
     }

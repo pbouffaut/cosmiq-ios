@@ -189,6 +189,7 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
                 oxygenPercent: oxygen,
                 atmosphericMillibar: 1013,
                 sampleIntervalSeconds: interval,
+                minTemperature: nil,
                 samples: samples,
                 rawData: Data(),
                 siteName: site?.name,

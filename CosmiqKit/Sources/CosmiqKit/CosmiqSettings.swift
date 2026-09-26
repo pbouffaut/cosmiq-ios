@@ -201,27 +201,40 @@ public enum CosmiqSettingWrite {
         return CosmiqPacket(command: CosmiqCommand.setPPO2, payload: [raw])
     }
 
+    /// - Parameter meters: 5...50 (the Deepblu app's range).
     public static func scubaDepthAlarm(meters: Int) -> CosmiqPacket {
-        let raw = meters * 100 + 1000
+        let raw = max(5, min(50, meters)) * 100 + 1000
         return CosmiqPacket(command: CosmiqCommand.setScubaDepthAlarm,
                             payload: [UInt8(raw >> 8), UInt8(raw & 0xFF)])
     }
 
+    /// - Parameter minutes: 10...120 (the Deepblu app's range).
     public static func scubaTimeAlarm(minutes: Int) -> CosmiqPacket {
-        CosmiqPacket(command: CosmiqCommand.setScubaTimeAlarm,
-                     payload: [UInt8(minutes >> 8), UInt8(minutes & 0xFF)])
+        let clamped = max(10, min(120, minutes))
+        return CosmiqPacket(command: CosmiqCommand.setScubaTimeAlarm,
+                            payload: [UInt8(clamped >> 8), UInt8(clamped & 0xFF)])
     }
 
-    /// - Parameter seconds: 30...600, in 5 s steps.
-    public static func freediveMaxTime(seconds: Int) -> CosmiqPacket {
+    /// The 0x26 packet also carries freedive depth alarm 3 in its first byte —
+    /// writing max time with a hard-coded byte silently reset alarm 3 to 25 m
+    /// (cosmiq5-web v69 finding). Pass the current alarm 3 so it round-trips
+    /// unchanged; when the device doesn't report it (original COSMIQ+, where
+    /// $60 never answers), the legacy 25 m byte is sent.
+    /// - Parameters:
+    ///   - seconds: 30...600, in 5 s steps.
+    ///   - alarm3Meters: current freedive depth alarm 3, if known.
+    public static func freediveMaxTime(seconds: Int, alarm3Meters: Int?) -> CosmiqPacket {
         let clamped = max(30, min(600, seconds))
+        let alarm3 = UInt8(max(0, (alarm3Meters ?? 25) - 5))
         return CosmiqPacket(command: CosmiqCommand.setFreediveMaxTime,
-                            payload: [0x14, UInt8((clamped - 30) / 5)])
+                            payload: [alarm3, UInt8((clamped - 30) / 5)])
     }
 
     /// Freedive depth alarms live in pairs (1-2, 3-4, 5-6) and must be written
     /// together, even-numbered alarm first. `partnerMeters` is the current value
-    /// of the paired alarm, which the caller reads from `CosmiqSettings`.
+    /// of the paired alarm, which the caller reads from `CosmiqSettings` —
+    /// never write a pair whose partner hasn't been read, or it gets clobbered.
+    /// - Parameter meters: 5...80 (the Deepblu app's range).
     public static func freediveDepthAlarm(number: Int, meters: Int, partnerMeters: Int) throws -> CosmiqPacket {
         guard (1...6).contains(number) else {
             throw CosmiqProtocolError.malformedPacket("freedive alarm \(number)")
@@ -232,7 +245,7 @@ public enum CosmiqSettingWrite {
         case 3, 4: command = CosmiqCommand.setFreediveAlarms34
         default: command = CosmiqCommand.setFreediveAlarms56
         }
-        let own = UInt8(max(0, meters - 5))
+        let own = UInt8(max(5, min(80, meters)) - 5)
         let partner = UInt8(max(0, partnerMeters - 5))
         // Payload order is [even alarm][odd alarm].
         let payload = number.isMultiple(of: 2) ? [own, partner] : [partner, own]

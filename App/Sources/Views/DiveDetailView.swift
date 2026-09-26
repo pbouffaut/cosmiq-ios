@@ -157,7 +157,15 @@ struct DiveDetailView: View {
 
     private var detailsSection: some View {
         Section("Details") {
+            if let note = current.profileNote {
+                Label(note, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
             LabeledContent("Mode", value: current.activity.label)
+            if let minTemp = current.minTemperature, current.samples.isEmpty {
+                LabeledContent("Min Temperature", value: String(format: "%.1f °C", minTemp))
+            }
             if current.userDate != nil, let recorded = current.start {
                 LabeledContent("Computer Time",
                                value: recorded.formatted(date: .abbreviated, time: .shortened))

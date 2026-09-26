@@ -40,10 +40,10 @@ final class DiveTests: XCTestCase {
 
     func testParseScubaDive() throws {
         var data = makeHeader()
-        data += makeSample(temperatureDeciC: 285, pressureMillibar: 1513) // ~5 m, 28.5 C
-        data += makeSample(temperatureDeciC: 280, pressureMillibar: 3013) // ~19.9 m
-        data += [0xFF, 0xFF, 0xFF, 0xFF] // padding must be skipped
-        data += makeSample(temperatureDeciC: 282, pressureMillibar: 2013) // ~9.9 m
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 1513) // 5 m, 28.5 C
+        data += makeSample(temperatureDeciC: 280, pressureMillibar: 3013) // 20 m
+        data += [0xFF, 0xFF, 0xFF, 0xFF] // erased slot must be skipped
+        data += makeSample(temperatureDeciC: 282, pressureMillibar: 2013) // 10 m
 
         let dive = try DiveParser.parse(data: Data(data))
 
@@ -54,14 +54,14 @@ final class DiveTests: XCTestCase {
         XCTAssertEqual(dive.sampleIntervalSeconds, 20)
         XCTAssertEqual(dive.samples.count, 3)
 
-        // Max depth: (3013-1013) mbar over salt water = 2000*100/(1025*9.80665) m
-        XCTAssertEqual(dive.maxDepth, 19.90, accuracy: 0.01)
+        // Fresh water (salt flag unset): depth = (p - surface) / 100
+        XCTAssertEqual(dive.maxDepth, 20.0, accuracy: 0.01)
 
         XCTAssertEqual(dive.samples[0].time, 20)
         XCTAssertEqual(dive.samples[0].temperature, 28.5, accuracy: 0.001)
-        XCTAssertEqual(dive.samples[0].depth, 4.97, accuracy: 0.01)
-        // Padding does not advance time.
-        XCTAssertEqual(dive.samples[2].time, 60)
+        XCTAssertEqual(dive.samples[0].depth, 5.0, accuracy: 0.01)
+        // Sample times are positional, so an erased slot still advances time.
+        XCTAssertEqual(dive.samples[2].time, 80)
 
         // Date comes from the odd header layout (minute before hour).
         let calendar = Calendar.current
@@ -73,11 +73,64 @@ final class DiveTests: XCTestCase {
         XCTAssertEqual(calendar.component(.minute, from: start), 30)
     }
 
-    func testFreediveDurationIsSeconds() throws {
-        let data = makeHeader(activity: .freedive, duration: 95)
+    func testFreediveDurationIsSecondsAndIntervalIsOneSecond() throws {
+        var data = makeHeader(activity: .freedive, duration: 95)
+        data += makeSample(temperatureDeciC: 285, pressureMillibar: 1513)
         let dive = try DiveParser.parse(data: Data(data))
         XCTAssertEqual(dive.duration, 95)
-        XCTAssertTrue(dive.samples.isEmpty)
+        XCTAssertEqual(dive.sampleIntervalSeconds, 1, "the app hard-codes 1 s for freedives")
+        XCTAssertEqual(dive.samples[0].time, 1)
+    }
+
+    func testSaltFlagAndPressureSentinel() throws {
+        // Salt flag set (reserved bit 0) -> depth divisor 102.5.
+        var salty = makeHeader()
+        salty[20] = 0x01
+        salty += makeSample(temperatureDeciC: 285, pressureMillibar: 3063)
+        let saltDive = try DiveParser.parse(data: Data(salty))
+        XCTAssertEqual(saltDive.samples[0].depth, 20.0, accuracy: 0.01)
+
+        // dvsetting 0x80B4 means standard 1000 mbar surface pressure.
+        var sentinel = makeHeader()
+        sentinel[4] = 0xB4
+        sentinel[5] = 0x80
+        let sentinelDive = try DiveParser.parse(data: Data(sentinel))
+        XCTAssertEqual(sentinelDive.atmosphericMillibar, 1000)
+    }
+
+    func testSamplesPastDiveTimeAreCut() throws {
+        // 1-minute dive at 20 s interval: only 3 sample slots belong to it.
+        var data = makeHeader(duration: 1)
+        for _ in 0..<6 {
+            data += makeSample(temperatureDeciC: 285, pressureMillibar: 1513)
+        }
+        let dive = try DiveParser.parse(data: Data(data))
+        XCTAssertEqual(dive.samples.count, 3)
+    }
+
+    func testProfileSlotMapping() {
+        func header(sector: Int, samples: Int = 10) -> [UInt8] {
+            var h = [UInt8](repeating: 0, count: DiveParser.headerSize)
+            h[30] = UInt8(sector & 0xFF); h[31] = UInt8(sector >> 8)
+            h[28] = UInt8(samples & 0xFF); h[29] = UInt8(samples >> 8)
+            return h
+        }
+        // Dive 0 at sector 300 overwrote dive 2 at sector 44; dive 1 at
+        // sector 260 has no matching older dive; dive 3 at sector 50 is intact.
+        let headers = [header(sector: 300), header(sector: 260),
+                       header(sector: 44), header(sector: 50)]
+        XCTAssertEqual(DiveParser.profileSlot(forDiveAt: 0, headers: headers), .recovered(2))
+        XCTAssertEqual(DiveParser.profileSlot(forDiveAt: 1, headers: headers), .unreachable)
+        XCTAssertEqual(DiveParser.profileSlot(forDiveAt: 2, headers: headers), .overwritten)
+        XCTAssertEqual(DiveParser.profileSlot(forDiveAt: 3, headers: headers), .own(3))
+        XCTAssertEqual(DiveParser.sampleCount(ofHeader: headers[0]), 10)
+        XCTAssertEqual(DiveParser.startSector(ofHeader: headers[0]), 300)
+    }
+
+    func testStripErased() {
+        let body: [UInt8] = [1, 2, 3, 4, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        XCTAssertEqual(DiveParser.stripErased(body), [1, 2, 3, 4])
+        XCTAssertEqual(DiveParser.stripErased([0xFF, 0xFF, 0xFF, 0xFF]), [])
     }
 
     func testFingerprintMatchesTimestampBytes() throws {
@@ -97,7 +150,7 @@ final class DiveTests: XCTestCase {
         let dive = try DiveParser.parse(data: Data(data))
         let csv = DiveExporter.csv(for: dive)
         XCTAssertTrue(csv.hasPrefix("time_s,depth_m,temperature_c\n"))
-        XCTAssertTrue(csv.contains("20,4.97,28.50"))
+        XCTAssertTrue(csv.contains("20,5.00,28.50"))
     }
 
     func testUDDFExport() throws {
