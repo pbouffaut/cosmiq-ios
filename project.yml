@@ -45,8 +45,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        MARKETING_VERSION: 1.3.0
-        CURRENT_PROJECT_VERSION: 6
+        MARKETING_VERSION: 1.3.1
+        CURRENT_PROJECT_VERSION: 7
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: Q9AA7ZL33M
         PRODUCT_BUNDLE_IDENTIFIER: com.pbouffaut.cosmiq
