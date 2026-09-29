@@ -132,7 +132,10 @@ final class CosmiqSession {
 
             try await Task.sleep(for: Self.interCommandGap)
             let countReply = try await ble.transfer(CosmiqCommand.query(CosmiqCommand.diveCount))
-            let diveCount = Int(countReply.payload.first ?? 0)
+            // The count is all payload bytes, big-endian (cosmiq5-web): a unit
+            // past 255 dives replies with two bytes, and reading only the
+            // first would massively undercount.
+            let diveCount = countReply.payload.reduce(0) { $0 << 8 | Int($1) }
             guard diveCount > 0 else { return DiveCatalog(candidates: [], allHeaders: []) }
 
             var allHeaders: [[UInt8]] = []

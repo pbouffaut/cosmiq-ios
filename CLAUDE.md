@@ -52,6 +52,8 @@ Sources of truth:
   ("645 m" profiles, subsurface#3548).
 - Gen 5 units may advertise without a name in the first packet: scan with
   duplicates allowed, accept NUS-advertising devices regardless of name.
+- The `0x40` dive-count reply is all payload bytes big-endian (can exceed one
+  byte past 255 dives) — never read just the first byte.
 
 ## Apple / release
 

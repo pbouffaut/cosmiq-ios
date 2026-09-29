@@ -31,6 +31,18 @@
       your iPhone, and make sure Bluetooth is enabled in iOS Settings. The device advertises
       as “COSMIQ” or “Deepblu”.</p>
 
+      <p><strong>My older dives look perfect, but recent dives have no profile (or show a
+      “firmware storage bug” note).</strong><br>
+      This is a bug in the Cosmiq’s own firmware, not in your unit or the app, and it affects
+      every COSMIQ+, and Cosmiq 5 up to the latest firmware. Once a logbook grows past roughly
+      a hundred dives, the device starts writing new profiles into the wrong flash slot: newer
+      dives read back as garbage (this is what shows up as “645 m” dives in Subsurface), and the
+      oldest profiles get overwritten. The app recovers everything that is still physically
+      readable, and imports the rest with correct date, duration, depth and temperature but no
+      depth curve — clearly marked on the dive page. There is no factory reset and no firmware
+      update that fixes it (Deepblu shut down first). The one reliable defense: <em>sync soon
+      after diving</em> — once a dive is in your logbook and iCloud, the firmware can’t lose it.</p>
+
       <p><strong>Freedive alarms 3–6 are missing.</strong><br>
       The original COSMIQ+ supports two freedive depth alarms; alarms 3–6 exist only on the
       Cosmiq Gen 5. The app shows what your hardware supports.</p>
